@@ -1,0 +1,26 @@
+# 비밀
+.env
+client_secret.json
+*_secret*.json
+
+# 런타임 데이터
+sessions.db
+sessions.db-journal
+sessions.db-wal
+sessions.db-shm
+
+# 디버그/캐시
+_svg_debug/
+_excal_debug_out/
+__pycache__/
+*.pyc
+.setup_done
+
+# 문서
+TROUBLESHOOTING.md
+
+# 에디터/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

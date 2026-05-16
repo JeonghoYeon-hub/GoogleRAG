@@ -1,0 +1,2029 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>파일 RAG 검색 시스템</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <style>
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(6px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .fade-up { animation: fadeUp 0.2s ease-out; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { animation: spin 0.75s linear infinite; }
+
+    @keyframes blink {
+      0%, 100% { opacity: 0.2; }
+      50%       { opacity: 1; }
+    }
+    .dot1 { animation: blink 1.2s ease-in-out infinite; }
+    .dot2 { animation: blink 1.2s ease-in-out 0.2s infinite; }
+    .dot3 { animation: blink 1.2s ease-in-out 0.4s infinite; }
+
+    .drop-active {
+      border-color: #3b82f6 !important;
+      background-color: rgba(59,130,246,0.07) !important;
+    }
+
+    .prose p { margin-bottom: 0.5em; }
+    .prose p:last-child { margin-bottom: 0; }
+    .prose ul  { list-style: disc;    padding-left: 1.4em; margin-bottom: 0.5em; }
+    .prose ol  { list-style: decimal; padding-left: 1.4em; margin-bottom: 0.5em; }
+    .prose li  { margin-bottom: 0.15em; }
+    .prose h1  { font-size: 1.2em; font-weight: 700; margin: 0.75em 0 0.3em; }
+    .prose h2  { font-size: 1.1em; font-weight: 600; margin: 0.65em 0 0.3em; }
+    .prose h3  { font-size: 1.0em; font-weight: 600; margin: 0.5em  0 0.3em; }
+    .prose strong { font-weight: 600; color: #f3f4f6; }
+    .prose em     { font-style: italic; color: #d1d5db; }
+    .prose code {
+      background: #1f2937; padding: 0.1em 0.35em;
+      border-radius: 4px; font-size: 0.85em; font-family: 'Consolas', monospace;
+    }
+    .prose pre {
+      background: #111827; border: 1px solid #374151; border-radius: 8px;
+      padding: 0.9em 1em; overflow-x: auto; margin: 0.5em 0;
+    }
+    .prose pre code { background: none; padding: 0; font-size: 0.82em; }
+    .prose blockquote { border-left: 3px solid #374151; padding-left: 0.75em; color: #9ca3af; margin: 0.5em 0; }
+    .prose a { color: #60a5fa; text-decoration: underline; }
+    .prose table { border-collapse: collapse; width: 100%; margin: 0.5em 0; font-size: 0.875em; }
+    .prose th, .prose td { border: 1px solid #374151; padding: 0.4em 0.6em; text-align: left; }
+    .prose th { background: #1f2937; font-weight: 600; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 h-screen flex flex-col overflow-hidden">
+
+<!-- ── API Key Setup Modal ────────────────────────────────────────────────── -->
+<div id="setup-modal" class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+  <div class="bg-gray-900 border border-gray-700 rounded-2xl p-8 w-full max-w-md mx-4 shadow-2xl">
+    <div class="flex items-center gap-3 mb-6">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-violet-600 flex items-center justify-center flex-shrink-0">
+        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586
+               a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+      </div>
+      <div>
+        <h2 class="text-lg font-bold">파일 RAG 검색 시스템</h2>
+        <p class="text-xs text-gray-500 mt-0.5">Google Gemini File Search 기반</p>
+      </div>
+    </div>
+    <div class="space-y-5">
+
+      <!-- Gemini (필수) -->
+      <div id="api-key-section">
+        <label class="block text-sm font-medium text-gray-300 mb-1.5">
+          Gemini API Key <span class="text-red-400 text-xs">필수</span>
+        </label>
+        <input id="api-key-input" type="password" placeholder="AIza..."
+          class="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-sm
+                 placeholder-gray-600 focus:outline-none focus:border-blue-500 focus:ring-1
+                 focus:ring-blue-500 transition"
+          onkeydown="if(event.key==='Enter') completeSetup()">
+        <p class="mt-1.5 text-xs text-gray-600">
+          <a href="https://aistudio.google.com/app/apikey" target="_blank"
+             class="text-blue-400 hover:underline">Google AI Studio</a>에서 발급
+        </p>
+      </div>
+
+      <div class="border-t border-gray-800"></div>
+
+      <!-- Notion (선택) -->
+      <div>
+        <label class="block text-sm font-medium text-gray-300 mb-1.5">
+          Notion API Key <span class="text-gray-600 text-xs">선택</span>
+        </label>
+        <input id="setup-notion-input" type="password" placeholder="secret_..."
+          class="w-full px-4 py-2.5 bg-gray-800 border border-gray-700 rounded-xl text-sm
+                 placeholder-gray-600 focus:outline-none focus:border-blue-500 focus:ring-1
+                 focus:ring-blue-500 transition">
+        <p class="mt-1.5 text-xs text-gray-600">
+          <a href="https://www.notion.so/my-integrations" target="_blank"
+             class="text-blue-400 hover:underline">Notion 통합</a>에서 발급 · 입력하지 않으면 Notion 연동 비활성
+        </p>
+      </div>
+
+      <!-- Google Drive (선택) -->
+      <div id="setup-drive-section">
+        <label class="block text-sm font-medium text-gray-300 mb-2">
+          Google Drive <span class="text-gray-600 text-xs">선택</span>
+        </label>
+        <div id="setup-drive-unavailable" class="text-xs text-gray-600">
+          client_secret.json 파일이 없어 Drive 연동을 사용할 수 없습니다.
+        </div>
+        <div id="setup-drive-available" class="hidden">
+          <button id="setup-drive-btn" onclick="setupConnectDrive()"
+            class="px-4 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-xl
+                   text-xs font-medium transition flex items-center gap-2">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 87.3 78" fill="currentColor">
+              <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3L28 48.55H0c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+              <path d="M43.65 25L29.9 1.2C28.55.45 27.0 0 25.45 0 23.9 0 22.35.45 21.0 1.2L6.6 25h37.05z" fill="#00ac47"/>
+              <path d="M80.7 25L66.3 1.2C64.95.45 63.4 0 61.85 0c-1.55 0-3.1.45-4.45 1.2L43.65 25H80.7z" fill="#ea4335"/>
+              <path d="M43.65 25H6.6L28 48.55h31.3L80.7 25H43.65z" fill="#00832d"/>
+              <path d="M59.3 48.55L43.65 25 28 48.55l15.65 23.55L59.3 48.55z" fill="#2684fc"/>
+              <path d="M59.3 48.55l11.4 19.75c1.35-.8 2.5-1.9 3.3-3.3l3.85-6.65c.8-1.4 1.2-2.95 1.2-4.5H59.3z" fill="#ffba00"/>
+            </svg>
+            <span id="setup-drive-label">Google 계정 연결</span>
+          </button>
+          <p id="setup-drive-ok" class="hidden mt-1.5 text-xs text-green-400">연결됨</p>
+        </div>
+      </div>
+
+      <button id="setup-btn" onclick="completeSetup()"
+        class="w-full py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl text-sm font-semibold
+               transition disabled:opacity-40 disabled:cursor-not-allowed">
+        시작하기
+      </button>
+      <p id="setup-error" class="hidden text-xs text-red-400 text-center"></p>
+    </div>
+  </div>
+</div>
+
+<!-- ── Auth Modal ────────────────────────────────────────────────────────── -->
+<div id="auth-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+  <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-md mx-4 shadow-2xl">
+    <!-- Header -->
+    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-800">
+      <div class="flex items-center gap-2.5">
+        <svg class="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4
+               a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+        </svg>
+        <h3 class="text-sm font-semibold">인증 및 API 키 설정</h3>
+      </div>
+      <button onclick="hideAuthModal()" class="p-1.5 hover:bg-gray-800 rounded-lg text-gray-500 hover:text-gray-300 transition">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="px-6 py-5 space-y-6">
+
+      <!-- Notion API Key -->
+      <div>
+        <div class="flex items-center gap-2 mb-2">
+          <svg class="w-4 h-4 text-gray-200 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.21 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.822 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.14c-.093-.514.28-.887.747-.933zM1.936 1.035l13.31-.98c1.634-.14 2.055-.047 3.082.7l4.249 2.986c.7.513.934.653.934 1.213v16.378c0 1.026-.373 1.634-1.68 1.726l-15.458.934c-.98.047-1.448-.093-1.962-.747l-3.129-4.06c-.56-.747-.793-1.306-.793-1.96V2.667c0-.839.374-1.54 1.447-1.632z"/>
+          </svg>
+          <span class="text-sm font-medium text-gray-200">Notion API Key</span>
+          <span id="auth-notion-badge" class="hidden text-xs px-2 py-0.5 rounded-full bg-green-900/50 text-green-400 border border-green-800">설정됨</span>
+        </div>
+        <p id="auth-notion-current" class="text-xs text-gray-500 mb-2 hidden"></p>
+        <div class="flex gap-2">
+          <input id="auth-notion-input" type="password" placeholder="secret_..."
+            class="flex-1 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm
+                   placeholder-gray-600 focus:outline-none focus:border-blue-500 transition"
+            onkeydown="if(event.key==='Enter') saveNotionKey()">
+          <button onclick="saveNotionKey()"
+            class="px-3 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-xs font-medium transition">저장</button>
+          <button id="auth-notion-clear" onclick="clearNotionKey()"
+            class="hidden px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-xs font-medium transition">해제</button>
+        </div>
+        <p class="mt-1.5 text-xs text-gray-600">
+          <a href="https://www.notion.so/my-integrations" target="_blank"
+             class="text-blue-400 hover:underline">Notion 통합</a>에서 발급
+        </p>
+        <p id="auth-notion-error" class="hidden mt-1 text-xs text-red-400"></p>
+      </div>
+
+      <div class="border-t border-gray-800"></div>
+
+      <!-- Google Drive -->
+      <div id="auth-drive-section">
+        <div class="flex items-center gap-2 mb-3">
+          <svg class="w-4 h-4 text-blue-400 flex-shrink-0" viewBox="0 0 87.3 78" fill="currentColor">
+            <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3L28 48.55H0c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+            <path d="M43.65 25L29.9 1.2C28.55.45 27.0 0 25.45 0 23.9 0 22.35.45 21.0 1.2L6.6 25h37.05z" fill="#00ac47"/>
+            <path d="M80.7 25L66.3 1.2C64.95.45 63.4 0 61.85 0c-1.55 0-3.1.45-4.45 1.2L43.65 25H80.7z" fill="#ea4335"/>
+            <path d="M43.65 25H6.6L28 48.55h31.3L80.7 25H43.65z" fill="#00832d"/>
+            <path d="M59.3 48.55L43.65 25 28 48.55l15.65 23.55L59.3 48.55z" fill="#2684fc"/>
+            <path d="M59.3 48.55l11.4 19.75c1.35-.8 2.5-1.9 3.3-3.3l3.85-6.65c.8-1.4 1.2-2.95 1.2-4.5H59.3z" fill="#ffba00"/>
+          </svg>
+          <span class="text-sm font-medium text-gray-200">Google Drive</span>
+          <span id="auth-drive-badge" class="hidden text-xs px-2 py-0.5 rounded-full bg-green-900/50 text-green-400 border border-green-800">연결됨</span>
+        </div>
+        <div id="auth-drive-unavailable" class="hidden text-xs text-gray-500 py-2">
+          client_secret.json 파일이 없어 Google Drive 연동을 사용할 수 없습니다.
+        </div>
+        <div id="auth-drive-controls" class="hidden flex gap-2">
+          <button id="auth-drive-connect" onclick="authDriveConnect()"
+            class="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-xs font-medium transition">
+            Google 계정 연결
+          </button>
+          <button id="auth-drive-disconnect" onclick="authDriveDisconnect()"
+            class="hidden px-4 py-2 bg-gray-700 hover:bg-red-900/50 hover:text-red-400 rounded-lg text-xs font-medium transition">
+            연결 해제
+          </button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ── Create Server Modal ────────────────────────────────────────────────── -->
+<div id="create-server-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+  <div class="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-sm mx-4 shadow-2xl">
+    <h3 class="text-base font-semibold mb-3">서버 추가</h3>
+
+    <!-- 모드 탭 -->
+    <div class="flex bg-gray-800 rounded-lg p-0.5 mb-4">
+      <button id="tab-new" onclick="setCreateMode('new')"
+        class="flex-1 py-1.5 text-xs rounded-md transition font-medium bg-gray-700 text-gray-200">새로 만들기</button>
+      <button id="tab-import" onclick="setCreateMode('import')"
+        class="flex-1 py-1.5 text-xs rounded-md transition font-medium text-gray-500">기존 스토어 가져오기</button>
+    </div>
+
+    <div class="space-y-3">
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1">서버 별칭 <span class="text-red-400">*</span></label>
+        <input id="new-alias" type="text" placeholder="예: 연구 문서, 회사 매뉴얼"
+          class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm
+                 placeholder-gray-600 focus:outline-none focus:border-blue-500 transition"
+          onkeydown="if(event.key==='Enter') submitCreateServer()">
+      </div>
+      <!-- 기존 스토어 이름 (import 모드에서만 표시) -->
+      <div id="store-name-field" class="hidden">
+        <label class="block text-xs font-medium text-gray-400 mb-1">스토어 이름 <span class="text-red-400">*</span></label>
+        <input id="new-store-name" type="text" placeholder="fileSearchStores/rag..."
+          class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm font-mono
+                 placeholder-gray-600 focus:outline-none focus:border-blue-500 transition"
+          onkeydown="if(event.key==='Enter') submitCreateServer()">
+        <p class="mt-1 text-xs text-gray-600">Google Console 또는 API에서 확인한 스토어 이름을 입력하세요.</p>
+      </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1">API 키 <span class="text-gray-600">(선택)</span></label>
+        <input id="new-api-key" type="password" placeholder="서버 키 사용 시 비워두세요"
+          class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm
+                 placeholder-gray-600 focus:outline-none focus:border-blue-500 transition">
+      </div>
+    </div>
+    <div class="flex gap-2 mt-4">
+      <button onclick="hideCreateServerModal()"
+        class="flex-1 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition">취소</button>
+      <button id="create-server-btn" onclick="submitCreateServer()"
+        class="flex-1 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-semibold
+               transition disabled:opacity-40 disabled:cursor-not-allowed">만들기</button>
+    </div>
+    <p id="create-server-error" class="hidden mt-2 text-xs text-red-400 text-center"></p>
+  </div>
+</div>
+
+<!-- ── Rename Modal ───────────────────────────────────────────────────────── -->
+<div id="rename-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+  <div class="bg-gray-900 border border-gray-700 rounded-2xl p-6 w-full max-w-xs mx-4 shadow-2xl">
+    <h3 class="text-sm font-semibold mb-3">별칭 변경</h3>
+    <input id="rename-input" type="text"
+      class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm
+             focus:outline-none focus:border-blue-500 transition"
+      onkeydown="if(event.key==='Enter') submitRename(); if(event.key==='Escape') hideRenameModal()">
+    <div class="flex gap-2 mt-3">
+      <button onclick="hideRenameModal()"
+        class="flex-1 py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm transition">취소</button>
+      <button onclick="submitRename()"
+        class="flex-1 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-semibold transition">저장</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Google Drive Modal ─────────────────────────────────────────────────── -->
+<div id="drive-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+  <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-lg mx-4 shadow-2xl flex flex-col" style="max-height:80vh">
+    <!-- Header -->
+    <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800 flex-shrink-0">
+      <div class="flex items-center gap-2.5">
+        <svg class="w-5 h-5 text-blue-400" viewBox="0 0 87.3 78" fill="currentColor">
+          <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3L28 48.55H0c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+          <path d="M43.65 25L29.35 0c-1.35.8-2.5 1.9-3.3 3.3l-25.8 44.7A9.06 9.06 0 000 52.5h28z" fill="#00ac47"/>
+          <path d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59l6 23.8z" fill="#ea4335"/>
+          <path d="M43.65 25L57.95 0H29.35z" fill="#00832d"/>
+          <path d="M59.3 48.55H28L13.8 76.8h49.9l-4.4-28.25z" fill="#2684fc"/>
+          <path d="M73.4 3.3c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25l15.65 23.55H87.3c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
+        </svg>
+        <h3 class="text-sm font-semibold">Google Drive</h3>
+      </div>
+      <div class="flex items-center gap-2">
+        <!-- Breadcrumb -->
+        <div id="drive-breadcrumb" class="flex items-center gap-1 text-xs text-gray-500"></div>
+        <button onclick="hideDriveModal()" class="p-1.5 hover:bg-gray-800 rounded-lg text-gray-500 hover:text-gray-300 transition">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+    <!-- Search -->
+    <div class="px-4 py-2.5 border-b border-gray-800 flex-shrink-0">
+      <input id="drive-search" type="text" placeholder="파일 검색..."
+        class="w-full px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-xs
+               placeholder-gray-600 focus:outline-none focus:border-blue-500 transition"
+        oninput="debounceDriveSearch(this.value)">
+    </div>
+    <!-- File list -->
+    <div id="drive-file-list" class="flex-1 overflow-y-auto px-2 py-2"></div>
+    <!-- Footer -->
+    <div class="px-4 py-3 border-t border-gray-800 flex items-center justify-between flex-shrink-0">
+      <span id="drive-selected-count" class="text-xs text-gray-500">선택된 파일 없음</span>
+      <div class="flex gap-2">
+        <button onclick="hideDriveModal()"
+          class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition">취소</button>
+        <button id="drive-upload-btn" onclick="uploadSelectedDriveFiles()" disabled
+          class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800
+                 disabled:cursor-not-allowed rounded-lg text-xs font-semibold transition">
+          업로드
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TEMP_SVG_DEBUG: 변환된 PDF 목록 모달 -->
+<div id="svg-debug-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+  <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-md mx-4 shadow-2xl flex flex-col" style="max-height:80vh">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800 flex-shrink-0">
+      <h3 class="text-sm font-semibold">SVG→PDF 변환 결과 (임시)</h3>
+      <button onclick="hideSvgDebug()" class="p-1.5 hover:bg-gray-800 rounded-lg text-gray-500 hover:text-gray-300 transition">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div id="svg-debug-list" class="flex-1 overflow-y-auto px-3 py-3 space-y-1"></div>
+  </div>
+</div>
+
+<!-- ── Notion Modal ───────────────────────────────────────────────────────── -->
+<div id="notion-modal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+  <div class="bg-gray-900 border border-gray-700 rounded-2xl w-full max-w-lg mx-4 shadow-2xl flex flex-col" style="max-height:80vh">
+    <div class="flex items-center justify-between px-5 py-4 border-b border-gray-800 flex-shrink-0">
+      <div class="flex items-center gap-2.5">
+        <svg class="w-5 h-5 text-gray-200" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.27 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.875 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936.55 14.21.087C15.7 0 16.165.087 17.05.747l3.924 2.751c.621.467.84.607.84 1.075v14.91c0 .98-.327 1.586-1.587 1.679l-14.336.886c-.84.047-1.215-.046-1.635-.56l-2.937-3.85c-.42-.514-.654-.886-.654-1.493V1.96c0-.606.28-1.166 1.075-1.166z"/>
+        </svg>
+        <h3 class="text-sm font-semibold">Notion 페이지</h3>
+      </div>
+      <button onclick="hideNotionModal()" class="p-1.5 hover:bg-gray-800 rounded-lg text-gray-500 hover:text-gray-300 transition">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="px-4 py-2.5 border-b border-gray-800 flex-shrink-0 flex items-center gap-2">
+      <input id="notion-search" type="text" placeholder="검색... (비우면 전체)"
+        class="flex-1 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-xs
+               placeholder-gray-600 focus:outline-none focus:border-blue-500 transition"
+        oninput="debounceNotionSearch(this.value)">
+      <label class="flex items-center gap-1.5 cursor-pointer flex-shrink-0 text-xs text-gray-400 hover:text-gray-200">
+        <input id="notion-select-all" type="checkbox" class="w-3.5 h-3.5 accent-blue-500"
+          onchange="toggleNotionSelectAll(this.checked)">
+        <span>전체</span>
+      </label>
+    </div>
+    <div id="notion-page-list" class="flex-1 overflow-y-auto px-2 py-2"></div>
+    <div class="px-4 py-2 border-t border-gray-800 flex items-center gap-4 flex-shrink-0 text-xs text-gray-400">
+      <label class="flex items-center gap-1.5 cursor-pointer">
+        <input id="notion-opt-subpages" type="checkbox" checked class="w-3.5 h-3.5 accent-blue-500">
+        <span>하위 페이지 포함</span>
+      </label>
+      <label class="flex items-center gap-1.5 cursor-pointer">
+        <input id="notion-opt-attachments" type="checkbox" checked class="w-3.5 h-3.5 accent-blue-500">
+        <span>이미지/첨부파일 포함</span>
+      </label>
+    </div>
+    <div class="px-4 py-3 border-t border-gray-800 flex items-center justify-between flex-shrink-0">
+      <span id="notion-selected-count" class="text-xs text-gray-500">선택된 페이지 없음</span>
+      <div class="flex gap-2">
+        <button onclick="hideNotionModal()"
+          class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs transition">취소</button>
+        <button id="notion-upload-btn" onclick="uploadSelectedNotionPages()" disabled
+          class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-800
+                 disabled:cursor-not-allowed rounded-lg text-xs font-semibold transition">
+          업로드
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Main App ────────────────────────────────────────────────────────────── -->
+<div id="app" class="hidden h-full flex flex-col">
+
+  <!-- Header -->
+  <header class="bg-gray-900 border-b border-gray-800 px-5 py-3 flex items-center justify-between flex-shrink-0">
+    <div class="flex items-center gap-2.5">
+      <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-600 to-violet-600 flex items-center justify-center">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586
+               a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+      </div>
+      <span class="font-semibold text-sm">파일 RAG 검색</span>
+    </div>
+    <div class="flex items-center gap-1.5">
+      <!-- TEMP_SVG_DEBUG: 변환 PDF 보기 버튼 -->
+      <button onclick="showSvgDebug()" title="SVG→PDF 디버그 (임시)"
+        class="p-1.5 hover:bg-gray-800 rounded-lg transition text-gray-500 hover:text-gray-200">
+        <svg class="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 17v-2a4 4 0 014-4h4M9 17H5a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v10a2 2 0 01-2 2h-4M9 17l3 3m0 0l3-3m-3 3v-6"/>
+        </svg>
+      </button>
+      <button onclick="showAuthModal()" title="인증 및 API 키 설정"
+        class="p-1.5 hover:bg-gray-800 rounded-lg transition text-gray-500 hover:text-gray-200">
+        <svg class="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4
+               a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Body -->
+  <div class="flex flex-1 overflow-hidden">
+
+    <!-- ── Sidebar ──────────────────────────────────────────────────────── -->
+    <aside class="w-64 bg-gray-900 border-r border-gray-800 flex flex-col flex-shrink-0">
+
+      <!-- Server selector -->
+      <div class="px-3 pt-3 pb-2">
+        <div class="flex items-center justify-between mb-1.5">
+          <span class="text-xs font-semibold text-gray-600 uppercase tracking-wider">서버</span>
+          <button onclick="showCreateServerModal()" title="새 서버 만들기"
+            class="w-5 h-5 flex items-center justify-center rounded text-gray-600
+                   hover:text-gray-300 hover:bg-gray-800 transition">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+            </svg>
+          </button>
+        </div>
+
+        <!-- Selector button -->
+        <div class="relative">
+          <button id="server-selector" onclick="toggleDropdown()"
+            class="w-full flex items-center justify-between px-3 py-2 bg-gray-800 hover:bg-gray-700
+                   rounded-lg text-xs transition">
+            <span id="current-alias" class="font-medium text-gray-200 truncate">서버 없음</span>
+            <svg id="dropdown-chevron" class="w-3.5 h-3.5 text-gray-500 flex-shrink-0 ml-2 transition-transform"
+              fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+            </svg>
+          </button>
+
+          <!-- Dropdown -->
+          <div id="server-dropdown"
+            class="hidden absolute top-full left-0 right-0 mt-1 bg-gray-800 border border-gray-700
+                   rounded-lg overflow-hidden z-20 shadow-xl">
+            <div id="server-dropdown-list" class="max-h-52 overflow-y-auto"></div>
+            <div class="border-t border-gray-700">
+              <button onclick="showCreateServerModal()"
+                class="w-full px-3 py-2 text-left text-xs text-blue-400 hover:bg-gray-700 transition
+                       flex items-center gap-1.5">
+                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                </svg>
+                새 서버 만들기
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mx-3 border-t border-gray-800 mb-2"></div>
+
+      <!-- Drop zone -->
+      <div id="drop-zone"
+        class="mx-3 border-2 border-dashed border-gray-700 rounded-xl p-4 text-center
+               hover:border-gray-500 transition select-none">
+        <svg class="w-6 h-6 mx-auto text-gray-600 mb-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+        </svg>
+        <p class="text-xs font-medium text-gray-400">드래그 앤 드롭</p>
+        <p class="text-xs text-gray-600 mt-0.5">파일 또는 폴더를 여기에 놓으세요</p>
+        <div class="flex gap-2 mt-2.5 justify-center">
+          <button id="pick-files-btn"
+            class="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs text-gray-300 transition">
+            파일 선택
+          </button>
+          <button id="pick-folder-btn"
+            class="px-2.5 py-1 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs text-gray-300 transition
+                   flex items-center gap-1">
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/>
+            </svg>
+            폴더 선택
+          </button>
+        </div>
+        <div id="drive-btn-wrap" class="hidden mt-2">
+          <button id="drive-btn" onclick="openDrive()"
+            class="w-full px-2.5 py-1.5 bg-blue-950 hover:bg-blue-900 border border-blue-800
+                   rounded-lg text-xs text-blue-300 transition flex items-center justify-center gap-1.5">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 87.3 78" fill="currentColor">
+              <path d="M6.6 66.85l3.85 6.65c.8 1.4 1.95 2.5 3.3 3.3L28 48.55H0c0 1.55.4 3.1 1.2 4.5z" fill="#0066da"/>
+              <path d="M43.65 25L29.35 0c-1.35.8-2.5 1.9-3.3 3.3l-25.8 44.7A9.06 9.06 0 000 52.5h28z" fill="#00ac47"/>
+              <path d="M73.55 76.8c1.35-.8 2.5-1.9 3.3-3.3l1.6-2.75 7.65-13.25c.8-1.4 1.2-2.95 1.2-4.5H59l6 23.8z" fill="#ea4335"/>
+              <path d="M43.65 25L57.95 0H29.35z" fill="#00832d"/>
+              <path d="M59.3 48.55H28L13.8 76.8h49.9l-4.4-28.25z" fill="#2684fc"/>
+              <path d="M73.4 3.3c-.8-1.4-1.95-2.5-3.3-3.3L43.65 25l15.65 23.55H87.3c0-1.55-.4-3.1-1.2-4.5z" fill="#ffba00"/>
+            </svg>
+            <span id="drive-btn-label">Google Drive</span>
+          </button>
+        </div>
+        <div id="notion-btn-wrap" class="hidden mt-2">
+          <button id="notion-btn" onclick="openNotion()"
+            class="w-full px-2.5 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-700
+                   rounded-lg text-xs text-gray-200 transition flex items-center justify-center gap-1.5">
+            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933zm14.337.745c.093.42 0 .84-.42.888l-.7.14v10.264c-.608.327-1.168.514-1.635.514-.748 0-.935-.234-1.495-.933l-4.577-7.186v6.952L12.27 19s0 .84-1.168.84l-3.222.186c-.093-.186 0-.653.327-.746l.84-.233V9.854L7.875 9.76c-.094-.42.14-1.026.793-1.073l3.456-.233 4.764 7.279v-6.44l-1.215-.139c-.093-.514.28-.887.747-.933zM1.936.55 14.21.087C15.7 0 16.165.087 17.05.747l3.924 2.751c.621.467.84.607.84 1.075v14.91c0 .98-.327 1.586-1.587 1.679l-14.336.886c-.84.047-1.215-.046-1.635-.56l-2.937-3.85c-.42-.514-.654-.886-.654-1.493V1.96c0-.606.28-1.166 1.075-1.166z"/>
+            </svg>
+            <span>Notion</span>
+          </button>
+        </div>
+      </div>
+      <input id="file-input"   type="file" class="hidden" multiple  onchange="handleFileSelect(event)">
+      <input id="folder-input" type="file" class="hidden" webkitdirectory multiple onchange="handleFileSelect(event)">
+
+      <!-- File list header -->
+      <div class="px-4 mt-2 mb-1 flex items-center justify-between">
+        <span class="text-xs font-semibold text-gray-600 uppercase tracking-wider">파일</span>
+        <div class="flex items-center gap-1.5">
+          <span id="file-count" class="text-xs text-gray-600">0개</span>
+          <button id="sync-btn" onclick="syncServerFiles()" title="Google에서 파일 목록 동기화"
+            class="w-5 h-5 flex items-center justify-center rounded text-gray-600
+                   hover:text-gray-300 hover:bg-gray-800 transition hidden">
+            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- File list -->
+      <div id="file-list" class="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5"></div>
+
+      <!-- Store info -->
+      <div class="px-3 py-2 border-t border-gray-800">
+        <p class="text-xs text-gray-700">File Search Store</p>
+        <p id="store-name" class="text-xs font-mono text-gray-700 truncate mt-0.5"></p>
+      </div>
+    </aside>
+
+    <!-- ── Chat ──────────────────────────────────────────────────────────── -->
+    <main class="flex-1 flex flex-col overflow-hidden">
+
+      <!-- Welcome -->
+      <div id="welcome-screen" class="flex-1 flex flex-col items-center justify-center p-10 text-center">
+        <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-600 to-violet-600
+                    flex items-center justify-center mb-5 shadow-lg shadow-blue-900/30">
+          <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6
+                 a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+          </svg>
+        </div>
+        <h2 class="text-2xl font-bold mb-2">파일에 질문하세요</h2>
+        <p class="text-sm text-gray-500 max-w-xs leading-relaxed">
+          서버를 선택하거나 새로 만든 뒤<br>파일을 업로드하면 Gemini가 답변합니다.
+        </p>
+        <div class="mt-6 flex flex-wrap gap-2 justify-center text-xs">
+          <span class="px-2.5 py-1 bg-gray-800 rounded-full text-gray-500">PDF</span>
+          <span class="px-2.5 py-1 bg-gray-800 rounded-full text-gray-500">DOCX / PPTX / XLSX</span>
+          <span class="px-2.5 py-1 bg-gray-800 rounded-full text-gray-500">TXT / MD / CSV</span>
+          <span class="px-2.5 py-1 bg-gray-800 rounded-full text-gray-500">최대 100MB</span>
+        </div>
+      </div>
+
+      <!-- Messages -->
+      <div id="chat-messages" class="hidden flex-1 overflow-y-auto px-6 py-5 space-y-5"></div>
+
+      <!-- Input -->
+      <div class="border-t border-gray-800 p-4 flex-shrink-0 bg-gray-950">
+        <div class="flex gap-2.5 items-end max-w-3xl mx-auto">
+          <textarea id="chat-input" rows="1"
+            placeholder="서버를 선택하고 파일을 업로드해주세요..."
+            class="flex-1 px-4 py-2.5 bg-gray-900 border border-gray-700 rounded-xl text-sm
+                   placeholder-gray-600 focus:outline-none focus:border-blue-500 focus:ring-1
+                   focus:ring-blue-500 resize-none transition overflow-hidden leading-relaxed"
+            onkeydown="handleKeyDown(event)" oninput="autoResize(this)"></textarea>
+          <button id="send-btn" onclick="sendQuery()" disabled
+            class="w-10 h-10 flex-shrink-0 bg-blue-600 hover:bg-blue-500
+                   disabled:bg-gray-800 disabled:cursor-not-allowed
+                   rounded-xl flex items-center justify-center transition">
+            <svg class="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/>
+            </svg>
+          </button>
+        </div>
+        <p id="status-hint" class="hidden mt-1.5 text-center text-xs text-gray-600"></p>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ── Script ──────────────────────────────────────────────────────────────── -->
+<script>
+  // ── Client ID (브라우저별 고유 식별자) ────────────────────────────────────
+  if (!localStorage.getItem('clientId')) {
+    localStorage.setItem('clientId', crypto.randomUUID());
+  }
+  const CLIENT_ID = localStorage.getItem('clientId');
+
+  // ── State ────────────────────────────────────────────────────────────────
+  const S = {
+    apiKey:      localStorage.getItem('apiKey') || '',
+    serverId:    localStorage.getItem('serverId') || localStorage.getItem('sessionId') || null,
+    serverList:  [],   // [{id, alias, store_name, file_count, ready_count}]
+    files:       [],   // current server files
+    messages:    [],
+    isQuerying:  false,
+    pollTimer:   null,
+    hasServerKey: false,
+    dropdownOpen: false,
+    renamingId:   null,
+  };
+
+  // ── API ──────────────────────────────────────────────────────────────────
+  async function api(method, path, body = null) {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body !== null) opts.body = JSON.stringify(body);
+    const res = await fetch(path, opts);
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(e.detail || res.statusText);
+    }
+    return res.json();
+  }
+
+  async function apiUpload(path, formData) {
+    const res = await fetch(path, { method: 'POST', body: formData });
+    if (!res.ok) {
+      const e = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(e.detail || res.statusText);
+    }
+    return res.json();
+  }
+
+  // ── Init ─────────────────────────────────────────────────────────────────
+  async function init() {
+    try {
+      const cfg = await api('GET', '/api/config');
+      S.hasServerKey = cfg.has_server_api_key;
+      S.hasDriveOAuth = cfg.has_drive_oauth;
+    } catch (_) {}
+
+    // 등록된 서버가 없으면 최초 설정 모달
+    let existingServers = [];
+    try { existingServers = await api('GET', '/api/servers'); } catch (_) {}
+
+    if (existingServers.length === 0) {
+      showSetupModal();
+      return;
+    }
+
+    await enterApp();
+  }
+
+  async function enterApp() {
+    showApp();
+    await Promise.all([loadServers(), initDrive(), initNotion()]);
+
+    // sessionId → serverId 마이그레이션
+    if (localStorage.getItem('sessionId') && !localStorage.getItem('serverId')) {
+      const old = localStorage.getItem('sessionId');
+      localStorage.setItem('serverId', old);
+      localStorage.removeItem('sessionId');
+      S.serverId = old;
+    }
+
+    // 저장된 서버 선택
+    if (S.serverId && S.serverList.find(s => s.id === S.serverId)) {
+      await selectServer(S.serverId, false);
+    } else if (S.serverList.length > 0) {
+      await selectServer(S.serverList[0].id, false);
+    }
+  }
+
+  // ── Setup Modal ───────────────────────────────────────────────────────────
+  function showSetupModal() {
+    document.getElementById('setup-modal').classList.remove('hidden');
+    document.getElementById('app').classList.add('hidden');
+    // Drive 섹션 표시 여부
+    if (S.hasDriveOAuth) {
+      document.getElementById('setup-drive-unavailable').classList.add('hidden');
+      document.getElementById('setup-drive-available').classList.remove('hidden');
+    }
+  }
+
+  async function setupConnectDrive() {
+    try {
+      const { auth_url } = await api('GET', `/api/drive/auth-url?client_id=${CLIENT_ID}`);
+      const win = window.open(auth_url, '_blank', 'width=500,height=650');
+      await new Promise((resolve) => {
+        const handler = (e) => { if (e.data === 'drive_auth_ok') { window.removeEventListener('message', handler); resolve(); } };
+        window.addEventListener('message', handler);
+        const t = setInterval(() => { if (win.closed) { clearInterval(t); resolve(); } }, 500);
+      });
+      const st = await api('GET', '/api/drive/status');
+      if (st.authenticated) {
+        DS.authenticated = true;
+        document.getElementById('setup-drive-label').textContent = '연결됨 ✓';
+        document.getElementById('setup-drive-btn').classList.add('opacity-60', 'cursor-default');
+        document.getElementById('setup-drive-btn').onclick = null;
+      }
+    } catch (e) { showToast(e.message, 'error'); }
+  }
+
+  function showApp() {
+    document.getElementById('setup-modal').classList.add('hidden');
+    document.getElementById('app').classList.remove('hidden');
+  }
+
+  async function completeSetup() {
+    const input = document.getElementById('api-key-input');
+    const key = input ? input.value.trim() : '';
+    if (!key && !S.hasServerKey) {
+      document.getElementById('setup-error').textContent = 'Gemini API 키를 입력해주세요.';
+      document.getElementById('setup-error').classList.remove('hidden');
+      return;
+    }
+    if (key) {
+      S.apiKey = key;
+      localStorage.setItem('apiKey', key);
+      await api('POST', '/api/settings/gemini', { key }).catch(() => {});
+    }
+    const notionKey = (document.getElementById('setup-notion-input')?.value || '').trim();
+    if (notionKey) {
+      await api('POST', '/api/settings/notion', { key: notionKey }).catch(() => {});
+    }
+    await enterApp();
+    if (S.serverList.length === 0) showCreateServerModal();
+  }
+
+  async function showAuthModal() {
+    document.getElementById('auth-modal').classList.remove('hidden');
+    const s = await api('GET', `/api/settings?client_id=${CLIENT_ID}`).catch(() => null);
+    if (!s) return;
+
+    // Notion
+    if (s.notion_key) {
+      document.getElementById('auth-notion-badge').classList.remove('hidden');
+      const cur = document.getElementById('auth-notion-current');
+      cur.textContent = '현재: ' + s.notion_key;
+      cur.classList.remove('hidden');
+      document.getElementById('auth-notion-clear').classList.remove('hidden');
+    }
+
+    // Drive
+    const driveCtrl = document.getElementById('auth-drive-controls');
+    const driveUnavail = document.getElementById('auth-drive-unavailable');
+    if (s.drive_available) {
+      driveCtrl.classList.remove('hidden');
+      driveCtrl.classList.add('flex');
+      if (s.drive_authenticated) {
+        document.getElementById('auth-drive-badge').classList.remove('hidden');
+        document.getElementById('auth-drive-connect').classList.add('hidden');
+        document.getElementById('auth-drive-disconnect').classList.remove('hidden');
+      } else {
+        document.getElementById('auth-drive-connect').classList.remove('hidden');
+        document.getElementById('auth-drive-disconnect').classList.add('hidden');
+      }
+    } else {
+      driveUnavail.classList.remove('hidden');
+    }
+  }
+
+  function hideAuthModal() {
+    document.getElementById('auth-modal').classList.add('hidden');
+  }
+
+  async function saveGeminiKey() {
+    const key = document.getElementById('auth-gemini-input').value.trim();
+    const errEl = document.getElementById('auth-gemini-error');
+    errEl.classList.add('hidden');
+    try {
+      await api('POST', '/api/settings/gemini', { key });
+      S.apiKey = key;
+      localStorage.setItem('apiKey', key);
+      S.hasServerKey = true;
+      document.getElementById('auth-gemini-badge').classList.remove('hidden');
+      const cur = document.getElementById('auth-gemini-current');
+      cur.textContent = '현재: ' + key.slice(0, 4) + '***' + key.slice(-3);
+      cur.classList.remove('hidden');
+      document.getElementById('auth-gemini-clear').classList.remove('hidden');
+      document.getElementById('auth-gemini-input').value = '';
+      showToast('Gemini API 키가 저장되었습니다.', 'info');
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.classList.remove('hidden');
+    }
+  }
+
+  async function clearGeminiKey() {
+    await api('DELETE', '/api/settings/gemini').catch(() => {});
+    S.hasServerKey = false;
+    localStorage.removeItem('apiKey');
+    S.apiKey = '';
+    document.getElementById('auth-gemini-badge').classList.add('hidden');
+    document.getElementById('auth-gemini-current').classList.add('hidden');
+    document.getElementById('auth-gemini-clear').classList.add('hidden');
+    showToast('Gemini API 키가 해제되었습니다.', 'info');
+  }
+
+  async function saveNotionKey() {
+    const key = document.getElementById('auth-notion-input').value.trim();
+    const errEl = document.getElementById('auth-notion-error');
+    errEl.classList.add('hidden');
+    try {
+      await api('POST', '/api/settings/notion', { key });
+      document.getElementById('auth-notion-badge').classList.remove('hidden');
+      const cur = document.getElementById('auth-notion-current');
+      cur.textContent = '현재: ' + key.slice(0, 7) + '***' + key.slice(-3);
+      cur.classList.remove('hidden');
+      document.getElementById('auth-notion-clear').classList.remove('hidden');
+      document.getElementById('auth-notion-input').value = '';
+      showToast('Notion API 키가 저장되었습니다.', 'info');
+      initNotion();
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.classList.remove('hidden');
+    }
+  }
+
+  async function clearNotionKey() {
+    await api('DELETE', '/api/settings/notion').catch(() => {});
+    document.getElementById('auth-notion-badge').classList.add('hidden');
+    document.getElementById('auth-notion-current').classList.add('hidden');
+    document.getElementById('auth-notion-clear').classList.add('hidden');
+    showToast('Notion API 키가 해제되었습니다.', 'info');
+  }
+
+  async function authDriveConnect() {
+    try {
+      const { auth_url } = await api('GET', `/api/drive/auth-url?client_id=${CLIENT_ID}`);
+      const win = window.open(auth_url, '_blank', 'width=500,height=650');
+      showToast('Google 로그인 후 이 창으로 돌아오세요.', 'info');
+      await new Promise((resolve) => {
+        const handler = (e) => {
+          if (e.data === 'drive_auth_ok') { window.removeEventListener('message', handler); resolve(); }
+        };
+        window.addEventListener('message', handler);
+        const t = setInterval(() => { if (win.closed) { clearInterval(t); resolve(); } }, 500);
+      });
+      const st = await api('GET', '/api/drive/status');
+      if (st.authenticated) {
+        document.getElementById('auth-drive-badge').classList.remove('hidden');
+        document.getElementById('auth-drive-connect').classList.add('hidden');
+        document.getElementById('auth-drive-disconnect').classList.remove('hidden');
+        DS.authenticated = true;
+        updateDriveBtn();
+        showToast('Google Drive 연결 완료', 'info');
+      }
+    } catch (e) { showToast(e.message, 'error'); }
+  }
+
+  async function authDriveDisconnect() {
+    await api('DELETE', `/api/drive/auth?client_id=${CLIENT_ID}`).catch(() => {});
+    document.getElementById('auth-drive-badge').classList.add('hidden');
+    document.getElementById('auth-drive-connect').classList.remove('hidden');
+    document.getElementById('auth-drive-disconnect').classList.add('hidden');
+    DS.authenticated = false;
+    updateDriveBtn();
+    showToast('Google Drive 연결이 해제되었습니다.', 'info');
+  }
+
+  // ── Server Management ─────────────────────────────────────────────────────
+  async function loadServers() {
+    try {
+      S.serverList = await api('GET', '/api/servers');
+      renderServerDropdown();
+    } catch (_) {}
+  }
+
+  async function selectServer(id, clearChat = true) {
+    closeDropdown();
+    S.serverId = id;
+    localStorage.setItem('serverId', id);
+    if (clearChat) { S.messages = []; }
+    S.files = [];
+    stopPolling();
+
+    try {
+      const data = await api('GET', `/api/servers/${id}`);
+      S.files = data.files || [];
+    } catch (_) {}
+
+    renderServerDropdown();
+    renderAll();
+    startPolling();
+  }
+
+  // ── Create Server ─────────────────────────────────────────────────────────
+  let _createMode = 'new';
+
+  function setCreateMode(mode) {
+    _createMode = mode;
+    const isImport = mode === 'import';
+    document.getElementById('tab-new').className    = `flex-1 py-1.5 text-xs rounded-md transition font-medium ${isImport ? 'text-gray-500' : 'bg-gray-700 text-gray-200'}`;
+    document.getElementById('tab-import').className = `flex-1 py-1.5 text-xs rounded-md transition font-medium ${isImport ? 'bg-gray-700 text-gray-200' : 'text-gray-500'}`;
+    document.getElementById('store-name-field').classList.toggle('hidden', !isImport);
+    document.getElementById('create-server-btn').textContent = isImport ? '가져오기' : '만들기';
+    if (isImport) setTimeout(() => document.getElementById('new-store-name').focus(), 50);
+    else setTimeout(() => document.getElementById('new-alias').focus(), 50);
+  }
+
+  function showCreateServerModal(prefillStoreName = '') {
+    closeDropdown();
+    _createMode = prefillStoreName ? 'import' : 'new';
+    document.getElementById('new-alias').value = '';
+    document.getElementById('new-api-key').value = '';
+    document.getElementById('new-store-name').value = prefillStoreName;
+    document.getElementById('create-server-error').classList.add('hidden');
+    document.getElementById('create-server-modal').classList.remove('hidden');
+    setCreateMode(_createMode);
+    if (!prefillStoreName) setTimeout(() => document.getElementById('new-alias').focus(), 50);
+    else setTimeout(() => document.getElementById('new-alias').focus(), 50);
+  }
+
+  function hideCreateServerModal() {
+    document.getElementById('create-server-modal').classList.add('hidden');
+  }
+
+  async function submitCreateServer() {
+    const alias     = document.getElementById('new-alias').value.trim();
+    const apiKey    = document.getElementById('new-api-key').value.trim();
+    const storeName = _createMode === 'import' ? document.getElementById('new-store-name').value.trim() : null;
+
+    if (!alias) {
+      document.getElementById('create-server-error').textContent = '별칭을 입력해주세요.';
+      document.getElementById('create-server-error').classList.remove('hidden');
+      return;
+    }
+    if (_createMode === 'import' && !storeName) {
+      document.getElementById('create-server-error').textContent = '스토어 이름을 입력해주세요.';
+      document.getElementById('create-server-error').classList.remove('hidden');
+      return;
+    }
+
+    const btn = document.getElementById('create-server-btn');
+    btn.disabled = true; btn.textContent = _createMode === 'import' ? '가져오는 중...' : '생성 중...';
+
+    try {
+      const data = await api('POST', '/api/servers', {
+        alias,
+        api_key:    apiKey || S.apiKey || null,
+        store_name: storeName || null,
+      });
+      hideCreateServerModal();
+      await loadServers();
+      await selectServer(data.id, true);
+    } catch (e) {
+      document.getElementById('create-server-error').textContent = e.message;
+      document.getElementById('create-server-error').classList.remove('hidden');
+    } finally {
+      btn.disabled = false; btn.textContent = _createMode === 'import' ? '가져오기' : '만들기';
+    }
+  }
+
+  // ── Rename Server ─────────────────────────────────────────────────────────
+  function showRenameModal(id) {
+    const server = S.serverList.find(s => s.id === id);
+    if (!server) return;
+    S.renamingId = id;
+    const input = document.getElementById('rename-input');
+    input.value = server.alias;
+    document.getElementById('rename-modal').classList.remove('hidden');
+    setTimeout(() => { input.focus(); input.select(); }, 50);
+  }
+
+  function hideRenameModal() {
+    document.getElementById('rename-modal').classList.add('hidden');
+    S.renamingId = null;
+  }
+
+  async function submitRename() {
+    const alias = document.getElementById('rename-input').value.trim();
+    if (!alias || !S.renamingId) return;
+    try {
+      await api('PATCH', `/api/servers/${S.renamingId}`, { alias });
+      await loadServers();
+      renderServerDropdown();
+      renderAll();
+      hideRenameModal();
+    } catch (e) {
+      showToast(`변경 실패: ${e.message}`, 'error');
+    }
+  }
+
+  // ── Delete File ───────────────────────────────────────────────────────────
+  async function deleteFile(fid) {
+    if (!S.serverId) return;
+    const f = S.files.find(f => f.id === fid);
+    if (!confirm(`"${f?.name || fid}" 파일을 삭제합니다.\nGoogle FileSearchStore에서도 제거됩니다. 계속하시겠습니까?`)) return;
+    try {
+      await api('DELETE', `/api/servers/${S.serverId}/files/${fid}`);
+      S.files = S.files.filter(f => f.id !== fid);
+      renderAll();
+      loadServers();
+    } catch (e) {
+      showToast(`파일 삭제 실패: ${e.message}`, 'error');
+    }
+  }
+
+  // ── Sync Server Files ─────────────────────────────────────────────────────
+  async function syncServerFiles() {
+    if (!S.serverId) return;
+    const btn = document.getElementById('sync-btn');
+    btn.classList.add('spin');
+    try {
+      const res = await api('POST', `/api/servers/${S.serverId}/sync`);
+      const data = await api('GET', `/api/servers/${S.serverId}`);
+      S.files = data.files || [];
+      renderAll();
+      loadServers();
+      showToast(`동기화 완료: ${res.synced_count}개 파일`, 'info');
+    } catch (e) {
+      showToast(`동기화 실패: ${e.message}`, 'error');
+    } finally {
+      btn.classList.remove('spin');
+    }
+  }
+
+  // ── Delete Server ─────────────────────────────────────────────────────────
+  async function deleteServer(id) {
+    const server = S.serverList.find(s => s.id === id);
+    if (!confirm(`"${server?.alias || id}" 서버를 삭제합니다.\nGoogle FileSearchStore도 함께 삭제됩니다. 계속하시겠습니까?`)) return;
+    try {
+      await api('DELETE', `/api/servers/${id}`);
+      await loadServers();
+      if (S.serverId === id) {
+        S.serverId = null; S.files = []; S.messages = [];
+        localStorage.removeItem('serverId');
+        stopPolling();
+        if (S.serverList.length > 0) await selectServer(S.serverList[0].id, true);
+      }
+      renderServerDropdown();
+      renderAll();
+    } catch (e) {
+      showToast(`삭제 실패: ${e.message}`, 'error');
+    }
+  }
+
+  // ── Dropdown ──────────────────────────────────────────────────────────────
+  function toggleDropdown() {
+    S.dropdownOpen ? closeDropdown() : openDropdown();
+  }
+
+  function openDropdown() {
+    S.dropdownOpen = true;
+    document.getElementById('server-dropdown').classList.remove('hidden');
+    document.getElementById('dropdown-chevron').style.transform = 'rotate(180deg)';
+    renderServerDropdown();
+  }
+
+  function closeDropdown() {
+    S.dropdownOpen = false;
+    document.getElementById('server-dropdown').classList.add('hidden');
+    document.getElementById('dropdown-chevron').style.transform = '';
+  }
+
+  // 외부 클릭 시 드롭다운 닫기
+  document.addEventListener('click', e => {
+    const sel = document.getElementById('server-selector');
+    const dd  = document.getElementById('server-dropdown');
+    if (sel && !sel.contains(e.target) && dd && !dd.contains(e.target)) closeDropdown();
+  });
+
+  function renderServerDropdown() {
+    // 현재 alias 표시
+    const cur = S.serverList.find(s => s.id === S.serverId);
+    document.getElementById('current-alias').textContent = cur ? cur.alias : '서버 없음';
+
+    // 드롭다운 목록
+    const list = document.getElementById('server-dropdown-list');
+    if (!S.serverList.length) {
+      list.innerHTML = `<p class="px-3 py-3 text-xs text-gray-600 text-center">서버가 없습니다</p>`;
+      return;
+    }
+    list.innerHTML = S.serverList.map(s => {
+      const isActive = s.id === S.serverId;
+      return `
+        <div class="flex items-center px-3 py-2 hover:bg-gray-700 transition group cursor-pointer
+                    ${isActive ? 'bg-gray-700/60' : ''}"
+          onclick="selectServer('${s.id}')">
+          <div class="flex-1 min-w-0">
+            <p class="text-xs font-medium text-gray-200 truncate">${esc(s.alias)}</p>
+            <p class="text-xs text-gray-600 mt-0.5">${s.ready_count}/${s.file_count}개 준비됨</p>
+          </div>
+          <div class="flex items-center gap-1 ml-2 opacity-0 group-hover:opacity-100 transition">
+            <button onclick="event.stopPropagation(); showRenameModal('${s.id}')"
+              class="p-1 rounded hover:bg-gray-600 text-gray-400 hover:text-gray-200" title="별칭 변경">
+              <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5
+                     m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+              </svg>
+            </button>
+            <button onclick="event.stopPropagation(); deleteServer('${s.id}')"
+              class="p-1 rounded hover:bg-red-900/50 text-gray-400 hover:text-red-400" title="삭제">
+              <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+              </svg>
+            </button>
+          </div>
+          ${isActive ? `<svg class="w-3 h-3 text-blue-400 ml-1.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>` : ''}
+        </div>`;
+    }).join('');
+  }
+
+  // ── File Upload ───────────────────────────────────────────────────────────
+  const SKIP = name => name.startsWith('.') || name === 'Thumbs.db' || name === 'desktop.ini';
+
+  function handleFileSelect(e) {
+    if (!S.serverId) { showToast('서버를 먼저 선택해주세요.', 'warn'); return; }
+    const files = Array.from(e.target.files).filter(f => !SKIP(f.name));
+    if (files.length > 1) showToast(`${files.length}개 파일 업로드 시작`, 'info');
+    files.forEach(uploadFile);
+    e.target.value = '';
+  }
+
+  async function uploadFile(file) {
+    if (!S.serverId) { showToast('서버를 먼저 선택해주세요.', 'warn'); return; }
+    if (file.size > 100 * 1024 * 1024) { showToast(`${file.name}: 100MB 초과`, 'error'); return; }
+
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const data = await apiUpload(`/api/servers/${S.serverId}/upload`, fd);
+      S.files.push({ id: data.file_id, name: file.name, size: file.size, status: 'uploading', error: null });
+      renderFiles();
+      startPolling();
+    } catch (e) {
+      showToast(`업로드 실패: ${e.message}`, 'error');
+    }
+  }
+
+  // ── Folder drag-drop helpers ──────────────────────────────────────────────
+  function readDirEntries(dirEntry) {
+    return new Promise(resolve => {
+      const reader = dirEntry.createReader();
+      const all = [];
+      const batch = () => reader.readEntries(entries => {
+        if (!entries.length) { resolve(all); return; }
+        all.push(...entries); batch();
+      });
+      batch();
+    });
+  }
+
+  async function collectFiles(entry) {
+    if (SKIP(entry.name)) return [];
+    if (entry.isFile) return new Promise(r => entry.file(f => r([f])));
+    const entries = await readDirEntries(entry);
+    return (await Promise.all(entries.map(collectFiles))).flat();
+  }
+
+  async function handleDropItems(items) {
+    if (!S.serverId) { showToast('서버를 먼저 선택해주세요.', 'warn'); return; }
+    const entries = Array.from(items).map(i => i.webkitGetAsEntry?.()).filter(Boolean);
+    if (!entries.length) return;
+    showToast('파일 분석 중...', 'info');
+    const files = (await Promise.all(entries.map(collectFiles))).flat();
+    if (!files.length) { showToast('업로드 가능한 파일이 없습니다.', 'warn'); return; }
+    showToast(`${files.length}개 파일 업로드 시작`, 'info');
+    for (const f of files) await uploadFile(f);
+  }
+
+  // ── Polling ───────────────────────────────────────────────────────────────
+  function startPolling() {
+    if (S.pollTimer) return;
+    S.pollTimer = setInterval(pollStatus, 3000);
+  }
+
+  function stopPolling() {
+    if (S.pollTimer) { clearInterval(S.pollTimer); S.pollTimer = null; }
+  }
+
+  async function pollStatus() {
+    if (!S.serverId) { stopPolling(); return; }
+    try {
+      const data = await api('GET', `/api/servers/${S.serverId}`);
+      S.files = data.files || [];
+      renderAll();
+      const allDone = S.files.length > 0 && S.files.every(f => f.status !== 'uploading');
+      if (allDone) { stopPolling(); loadServers(); }
+    } catch (_) {}
+  }
+
+  // ── Query ─────────────────────────────────────────────────────────────────
+  async function sendQuery() {
+    const input = document.getElementById('chat-input');
+    const q = input.value.trim();
+    if (!q || S.isQuerying || !S.serverId) return;
+
+    if (!S.files.some(f => f.status === 'ready')) {
+      showToast('인덱싱 완료된 파일이 없습니다.', 'warn'); return;
+    }
+
+    input.value = ''; autoResize(input);
+    S.messages.push({ role: 'user', content: q, citations: [] });
+    S.isQuerying = true;
+    renderAll(); scrollChat();
+
+    try {
+      const res = await api('POST', `/api/servers/${S.serverId}/query`, { query: q });
+      S.messages.push({ role: 'assistant', content: res.text, citations: res.citations || [] });
+    } catch (e) {
+      S.messages.push({ role: 'error', content: `오류: ${e.message}`, citations: [] });
+    } finally {
+      S.isQuerying = false;
+      renderAll(); scrollChat();
+    }
+  }
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuery(); }
+  }
+
+  function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  }
+
+  function scrollChat() {
+    setTimeout(() => {
+      const el = document.getElementById('chat-messages');
+      el.scrollTop = el.scrollHeight;
+    }, 50);
+  }
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  function renderAll() {
+    renderFiles();
+    renderMessages();
+    updateControls();
+  }
+
+  function renderFiles() {
+    const container = document.getElementById('file-list');
+    document.getElementById('file-count').textContent = `${S.files.length}개`;
+
+    const cur = S.serverList.find(s => s.id === S.serverId);
+    document.getElementById('store-name').textContent = cur?.store_name || '';
+    document.getElementById('sync-btn').classList.toggle('hidden', !S.serverId);
+
+    if (!S.files.length) {
+      container.innerHTML = `<p class="text-center text-xs text-gray-700 py-5">업로드된 파일 없음</p>`;
+      return;
+    }
+
+    container.innerHTML = S.files.map(f => {
+      const ext   = (f.name.split('.').pop() || 'FILE').toUpperCase().slice(0, 5);
+      const icon  = { uploading: `<div class="w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full spin flex-shrink-0"></div>`, ready: `<svg class="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>`, error: `<svg class="w-3.5 h-3.5 text-red-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>` }[f.status] || '';
+      const label = { uploading: '인덱싱 중', ready: '준비됨', error: '오류' }[f.status] || f.status;
+      const color = { uploading: 'text-blue-400', ready: 'text-emerald-400', error: 'text-red-400' }[f.status] || 'text-gray-400';
+      const tip   = f.error ? `title="${esc(f.error)}"` : '';
+      return `
+        <div class="flex items-center gap-1.5 px-2 py-1.5 rounded-lg hover:bg-gray-800/50 group" ${tip}>
+          <div class="w-7 h-7 rounded-md bg-gray-800 flex items-center justify-center text-[9px] font-bold text-gray-500 flex-shrink-0">${ext}</div>
+          <div class="flex-1 min-w-0">
+            <p class="text-xs font-medium text-gray-300 truncate">${esc(f.name)}</p>
+            <p class="text-xs ${color} flex items-center gap-1 mt-0.5">${icon}<span>${label}</span><span class="text-gray-700">${fmtSize(f.size)}</span></p>
+          </div>
+          <button onclick="deleteFile('${esc(f.id)}')"
+            class="flex-shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-900/50
+                   text-gray-600 hover:text-red-400 transition" title="파일 삭제">
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+            </svg>
+          </button>
+        </div>`;
+    }).join('');
+  }
+
+  function renderMessages() {
+    const container = document.getElementById('chat-messages');
+    const welcome   = document.getElementById('welcome-screen');
+
+    if (!S.messages.length && !S.isQuerying) {
+      welcome.classList.remove('hidden'); container.classList.add('hidden'); return;
+    }
+    welcome.classList.add('hidden'); container.classList.remove('hidden');
+
+    const html = S.messages.map(m => {
+      if (m.role === 'user') return `
+        <div class="flex justify-end fade-up">
+          <div class="max-w-xl px-4 py-2.5 bg-blue-600 rounded-2xl rounded-br-sm text-sm leading-relaxed">
+            ${esc(m.content).replace(/\n/g,'<br>')}
+          </div>
+        </div>`;
+
+      if (m.role === 'assistant') {
+        const refs = (m.citations||[]).filter(c=>c.title||c.uri);
+        const refHtml = refs.length ? `
+          <div class="mt-3 pt-3 border-t border-gray-800">
+            <p class="text-xs text-gray-600 mb-1.5 font-medium">출처</p>
+            ${refs.map(c=>`<div class="flex items-center gap-1.5 text-xs text-gray-500 mb-1">
+              <svg class="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+              <span class="truncate">${esc(c.title||c.uri)}</span></div>`).join('')}
+          </div>` : '';
+        return `
+          <div class="flex gap-3 fade-up">
+            <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-600 to-violet-600 flex items-center justify-center flex-shrink-0 mt-0.5">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            </div>
+            <div class="flex-1 max-w-2xl">
+              <div class="bg-gray-900 rounded-2xl rounded-tl-sm px-5 py-3.5">
+                <div class="prose text-gray-200 text-sm leading-relaxed">${marked.parse(m.content||'')}</div>
+                ${refHtml}
+              </div>
+            </div>
+          </div>`;
+      }
+
+      if (m.role === 'error') return `
+        <div class="flex gap-3 fade-up">
+          <div class="w-7 h-7 rounded-lg bg-red-950 flex items-center justify-center flex-shrink-0 mt-0.5">
+            <svg class="w-3.5 h-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          </div>
+          <div class="flex-1">
+            <div class="bg-red-950/40 border border-red-900 rounded-2xl rounded-tl-sm px-4 py-3 text-sm text-red-300">${esc(m.content)}</div>
+          </div>
+        </div>`;
+      return '';
+    }).join('');
+
+    const loading = S.isQuerying ? `
+      <div class="flex gap-3 fade-up">
+        <div class="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-600 to-violet-600 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        </div>
+        <div class="bg-gray-900 rounded-2xl rounded-tl-sm px-5 py-4 flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-gray-500 dot1 inline-block"></span>
+          <span class="w-2 h-2 rounded-full bg-gray-500 dot2 inline-block"></span>
+          <span class="w-2 h-2 rounded-full bg-gray-500 dot3 inline-block"></span>
+        </div>
+      </div>` : '';
+
+    container.innerHTML = html + loading;
+  }
+
+  function updateControls() {
+    const ready     = S.files.filter(f => f.status === 'ready').length;
+    const uploading = S.files.filter(f => f.status === 'uploading').length;
+    const canQuery  = ready > 0 && !S.isQuerying && !!S.serverId;
+
+    document.getElementById('send-btn').disabled = !canQuery;
+    const input = document.getElementById('chat-input');
+    input.disabled = !canQuery;
+
+    const hint = document.getElementById('status-hint');
+    if (S.isQuerying) {
+      input.placeholder = '응답 생성 중...';
+      hint.textContent = 'Gemini가 파일을 검색하고 있습니다...';
+      hint.classList.remove('hidden');
+    } else if (!S.serverId) {
+      input.placeholder = '서버를 선택하거나 만들어주세요...';
+      hint.classList.add('hidden');
+    } else if (uploading > 0) {
+      input.placeholder = `파일 인덱싱 중... (${uploading}개 처리 중)`;
+      hint.textContent = `${uploading}개 파일을 인덱싱 중입니다. 잠시 기다려주세요.`;
+      hint.classList.remove('hidden');
+    } else if (!ready) {
+      input.placeholder = '파일을 업로드해주세요...';
+      hint.classList.add('hidden');
+    } else {
+      input.placeholder = '파일 내용에 대해 질문하세요... (Enter: 전송, Shift+Enter: 줄바꿈)';
+      hint.classList.add('hidden');
+    }
+  }
+
+  // ── Drag & Drop ───────────────────────────────────────────────────────────
+  const dz = document.getElementById('drop-zone');
+
+  document.getElementById('pick-files-btn').addEventListener('click', e => {
+    e.stopPropagation(); document.getElementById('file-input').click();
+  });
+  document.getElementById('pick-folder-btn').addEventListener('click', e => {
+    e.stopPropagation(); document.getElementById('folder-input').click();
+  });
+
+  dz.addEventListener('dragover',  e => { e.preventDefault(); dz.classList.add('drop-active'); });
+  dz.addEventListener('dragleave', e => { if (!dz.contains(e.relatedTarget)) dz.classList.remove('drop-active'); });
+  dz.addEventListener('drop', async e => {
+    e.preventDefault(); dz.classList.remove('drop-active');
+    await handleDropItems(e.dataTransfer.items);
+  });
+
+  document.addEventListener('dragover', e => e.preventDefault());
+  document.addEventListener('drop', async e => {
+    e.preventDefault();
+    if (dz.contains(e.target)) return;
+    await handleDropItems(e.dataTransfer.items);
+  });
+
+  // ── Toast ─────────────────────────────────────────────────────────────────
+  function showToast(msg, type = 'info') {
+    const colors = { info: 'bg-gray-800', error: 'bg-red-900 border border-red-700', warn: 'bg-yellow-900 border border-yellow-700' };
+    const t = document.createElement('div');
+    t.className = `fixed bottom-6 left-1/2 -translate-x-1/2 px-4 py-2.5 rounded-xl text-sm shadow-xl z-50 fade-up ${colors[type]||colors.info}`;
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3500);
+  }
+
+  // ── Utils ─────────────────────────────────────────────────────────────────
+  function esc(s) {
+    return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function fmtSize(b) {
+    if (!b) return '';
+    if (b < 1024) return b+'B';
+    if (b < 1048576) return (b/1024).toFixed(0)+'KB';
+    return (b/1048576).toFixed(1)+'MB';
+  }
+
+  // ── Google Drive ──────────────────────────────────────────────────────────
+  const DS = {
+    authenticated: false,
+    hasDriveOAuth: false,
+    files:         [],       // current folder files
+    selected:      new Set(), // selected file ids
+    folderStack:   [],       // [{id, name}] breadcrumb
+    searchTimer:   null,
+    nextPageToken: '',
+  };
+
+  async function initDrive() {
+    try {
+      const cfg = await api('GET', '/api/config');
+      DS.hasDriveOAuth = cfg.has_drive_oauth;
+      if (!DS.hasDriveOAuth) return;
+
+      document.getElementById('drive-btn-wrap').classList.remove('hidden');
+      const st = await api('GET', `/api/drive/status?client_id=${CLIENT_ID}`);
+      DS.authenticated = st.authenticated;
+      updateDriveBtn();
+    } catch (_) {}
+  }
+
+  function updateDriveBtn() {
+    const label = document.getElementById('drive-btn-label');
+    label.textContent = DS.authenticated ? 'Google Drive (연결됨)' : 'Google Drive';
+  }
+
+  async function openDrive() {
+    if (!S.serverId) { showToast('서버를 먼저 선택해주세요.', 'warn'); return; }
+    if (!DS.authenticated) {
+      await connectDrive();
+      return;
+    }
+    DS.selected.clear();
+    DS.folderStack = [{ id: 'root', name: 'My Drive' }];
+    DS.searchTimer = null;
+    document.getElementById('drive-search').value = '';
+    document.getElementById('drive-modal').classList.remove('hidden');
+    await loadDriveFiles();
+  }
+
+  async function connectDrive() {
+    try {
+      const { auth_url } = await api('GET', `/api/drive/auth-url?client_id=${CLIENT_ID}`);
+      const win = window.open(auth_url, '_blank', 'width=500,height=650');
+      showToast('Google 로그인 후 이 창으로 돌아오세요.', 'info');
+
+      await new Promise((resolve) => {
+        const handler = (e) => {
+          if (e.data === 'drive_auth_ok') {
+            window.removeEventListener('message', handler);
+            resolve();
+          }
+        };
+        window.addEventListener('message', handler);
+        // fallback: poll if postMessage didn't work
+        const poll = setInterval(async () => {
+          if (win && win.closed) {
+            clearInterval(poll);
+            window.removeEventListener('message', handler);
+            resolve();
+          }
+        }, 1000);
+      });
+
+      const st = await api('GET', `/api/drive/status?client_id=${CLIENT_ID}`);
+      DS.authenticated = st.authenticated;
+      updateDriveBtn();
+      if (DS.authenticated) {
+        showToast('Google Drive 연결 완료', 'info');
+        openDrive();
+      }
+    } catch (e) {
+      showToast(`Drive 인증 실패: ${e.message}`, 'error');
+    }
+  }
+
+  function hideDriveModal() {
+    document.getElementById('drive-modal').classList.add('hidden');
+    DS.selected.clear();
+  }
+
+  async function loadDriveFiles(pageToken = '') {
+    const folder = DS.folderStack[DS.folderStack.length - 1];
+    const q = document.getElementById('drive-search').value.trim();
+    document.getElementById('drive-file-list').innerHTML =
+      `<p class="text-center text-xs text-gray-600 py-8">불러오는 중...</p>`;
+
+    updateDriveBreadcrumb();
+    try {
+      const params = new URLSearchParams({ parent: folder.id });
+      if (q) params.set('q', q);
+      if (pageToken) params.set('page_token', pageToken);
+      params.set('client_id', CLIENT_ID);
+      const data = await api('GET', `/api/drive/files?${params}`);
+      DS.files = data.files || [];
+      DS.nextPageToken = data.next_page_token || '';
+      renderDriveFiles();
+    } catch (e) {
+      document.getElementById('drive-file-list').innerHTML =
+        `<p class="text-center text-xs text-red-400 py-8">${esc(e.message)}</p>`;
+    }
+  }
+
+  function updateDriveBreadcrumb() {
+    const bc = document.getElementById('drive-breadcrumb');
+    bc.innerHTML = DS.folderStack.map((f, i) => {
+      const isLast = i === DS.folderStack.length - 1;
+      return isLast
+        ? `<span class="text-gray-300">${esc(f.name)}</span>`
+        : `<button onclick="driveNavTo(${i})" class="hover:text-gray-300 transition">${esc(f.name)}</button>
+           <span>›</span>`;
+    }).join('');
+  }
+
+  function driveNavTo(idx) {
+    DS.folderStack = DS.folderStack.slice(0, idx + 1);
+    DS.selected.clear();
+    document.getElementById('drive-search').value = '';
+    loadDriveFiles();
+  }
+
+  const FOLDER_MIME = 'application/vnd.google-apps.folder';
+  const GDOC_MIMES = new Set([
+    'application/vnd.google-apps.document',
+    'application/vnd.google-apps.spreadsheet',
+    'application/vnd.google-apps.presentation',
+  ]);
+  const UNSUPPORTED_MIMES = new Set([
+    'application/vnd.google-apps.shortcut',
+    'application/vnd.google-apps.form',
+    'application/vnd.google-apps.map',
+  ]);
+
+  function renderDriveFiles() {
+    const list = document.getElementById('drive-file-list');
+    if (!DS.files.length) {
+      list.innerHTML = `<p class="text-center text-xs text-gray-600 py-8">파일 없음</p>`;
+      return;
+    }
+
+    list.innerHTML = DS.files.map(f => {
+      const isFolder   = f.mimeType === FOLDER_MIME;
+      const isUnsupported = UNSUPPORTED_MIMES.has(f.mimeType) && !isFolder;
+      const isGDoc     = GDOC_MIMES.has(f.mimeType);
+      const checked    = DS.selected.has(f.id);
+      const ext        = isFolder ? 'DIR'
+                       : isGDoc   ? f.mimeType.replace('application/vnd.google-apps.','').slice(0,4).toUpperCase()
+                       : (f.name.split('.').pop() || 'FILE').toUpperCase().slice(0,5);
+      const extColor   = isFolder ? 'text-yellow-400' : isGDoc ? 'text-blue-400' : 'text-gray-500';
+      const sizeStr    = f.size ? fmtSize(parseInt(f.size)) : '';
+
+      if (isFolder) {
+        return `
+          <div onclick="driveOpenFolder('${f.id}','${esc(f.name)}')"
+            class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-800 cursor-pointer">
+            <div class="w-7 h-7 rounded-md bg-gray-800 flex items-center justify-center text-[9px] font-bold ${extColor} flex-shrink-0">DIR</div>
+            <p class="text-xs text-gray-300 flex-1 truncate">${esc(f.name)}</p>
+            <svg class="w-3.5 h-3.5 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </div>`;
+      }
+
+      if (isUnsupported) {
+        return `
+          <div class="flex items-center gap-2 px-2 py-1.5 rounded-lg opacity-40 cursor-not-allowed">
+            <div class="w-7 h-7 rounded-md bg-gray-800 flex items-center justify-center text-[9px] font-bold text-gray-600 flex-shrink-0">${ext}</div>
+            <p class="text-xs text-gray-500 flex-1 truncate">${esc(f.name)}</p>
+            <span class="text-[10px] text-gray-600">미지원</span>
+          </div>`;
+      }
+
+      return `
+        <label class="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-gray-800 cursor-pointer">
+          <input type="checkbox" ${checked ? 'checked' : ''}
+            onchange="toggleDriveFile('${f.id}','${esc(f.name)}','${esc(f.mimeType)}')"
+            class="w-3.5 h-3.5 accent-blue-500 flex-shrink-0">
+          <div class="w-7 h-7 rounded-md bg-gray-800 flex items-center justify-center text-[9px] font-bold ${extColor} flex-shrink-0">${ext}</div>
+          <div class="flex-1 min-w-0">
+            <p class="text-xs text-gray-300 truncate">${esc(f.name)}</p>
+            ${sizeStr ? `<p class="text-[10px] text-gray-600">${sizeStr}</p>` : ''}
+          </div>
+        </label>`;
+    }).join('');
+
+    if (DS.nextPageToken) {
+      list.insertAdjacentHTML('beforeend', `
+        <button onclick="loadDriveFiles('${DS.nextPageToken}')"
+          class="w-full py-2 text-xs text-blue-400 hover:text-blue-300 transition">
+          더 불러오기...
+        </button>`);
+    }
+  }
+
+  function driveOpenFolder(id, name) {
+    DS.folderStack.push({ id, name });
+    DS.selected.clear();
+    document.getElementById('drive-search').value = '';
+    loadDriveFiles();
+  }
+
+  function toggleDriveFile(id, name, mimeType) {
+    if (DS.selected.has(id)) DS.selected.delete(id);
+    else DS.selected.add(id);
+    updateDriveFooter();
+  }
+
+  function updateDriveFooter() {
+    const n = DS.selected.size;
+    document.getElementById('drive-selected-count').textContent =
+      n ? `${n}개 선택됨` : '선택된 파일 없음';
+    document.getElementById('drive-upload-btn').disabled = n === 0;
+  }
+
+  function debounceDriveSearch(val) {
+    clearTimeout(DS.searchTimer);
+    DS.searchTimer = setTimeout(() => loadDriveFiles(), 400);
+  }
+
+  async function uploadSelectedDriveFiles() {
+    if (!DS.selected.size || !S.serverId) return;
+    const btn = document.getElementById('drive-upload-btn');
+    btn.disabled = true; btn.textContent = '업로드 중...';
+
+    const toUpload = DS.files.filter(f => DS.selected.has(f.id));
+    hideDriveModal();
+    showToast(`${toUpload.length}개 파일 Drive에서 업로드 시작`, 'info');
+
+    for (const f of toUpload) {
+      try {
+        const data = await api('POST', `/api/servers/${S.serverId}/upload-from-drive`, {
+          file_id:   f.id,
+          file_name: f.name,
+          client_id: CLIENT_ID,
+          mime_type: f.mimeType,
+        });
+        S.files.push({ id: data.file_id, name: data.name, size: 0, status: 'uploading', error: null });
+        renderFiles();
+        startPolling();
+      } catch (e) {
+        showToast(`${f.name}: ${e.message}`, 'error');
+      }
+    }
+    btn.disabled = false; btn.textContent = '업로드';
+  }
+
+  // ── Notion ────────────────────────────────────────────────────────────────
+  const NS = {
+    configured:  false,
+    rootItems:   [],
+    childrenMap: new Map(),
+    titleMap:    new Map(),
+    typeMap:     new Map(),   // id → 'page' | 'database'
+    expanded:    new Set(),
+    loading:     new Set(),
+    selected:    new Set(),   // 개별 선택된 page/database ids
+    selectedDbs: new Set(),   // 전체 선택된 database ids (업로드 시 전체 포함)
+    searchTimer: null,
+  };
+
+  async function initNotion() {
+    try {
+      const cfg = await api('GET', '/api/config');
+      if (!cfg.has_notion) return;
+      NS.configured = true;
+      document.getElementById('notion-btn-wrap').classList.remove('hidden');
+    } catch (_) {}
+  }
+
+  async function openNotion() {
+    if (!S.serverId) { showToast('서버를 먼저 선택해주세요.', 'warn'); return; }
+    NS.selected.clear();
+    NS.selectedDbs.clear();
+    NS.childrenMap.clear();
+    NS.titleMap.clear();
+    NS.typeMap.clear();
+    NS.expanded.clear();
+    NS.loading.clear();
+    document.getElementById('notion-search').value = '';
+    document.getElementById('notion-select-all').checked = false;
+    document.getElementById('notion-modal').classList.remove('hidden');
+    await loadNotionRoot('');
+  }
+
+  function hideNotionModal() {
+    document.getElementById('notion-modal').classList.add('hidden');
+    NS.selected.clear();
+    NS.selectedDbs.clear();
+  }
+
+  async function loadNotionRoot(q) {
+    const list = document.getElementById('notion-page-list');
+    list.innerHTML = `<p class="text-center text-xs text-gray-600 py-8">불러오는 중...</p>`;
+    try {
+      const params = new URLSearchParams();
+      if (q) params.set('q', q);
+      const data = await api('GET', `/api/notion/pages?${params}`);
+      NS.rootItems = data.items || data.pages || [];
+      NS.rootItems.forEach(i => {
+        NS.titleMap.set(i.id, i.title);
+        NS.typeMap.set(i.id, i.type);
+      });
+      NS.childrenMap.clear();
+      NS.expanded.clear();
+      renderNotionTree();
+    } catch (e) {
+      list.innerHTML = `<p class="text-center text-xs text-red-400 py-8">${esc(e.message)}</p>`;
+    }
+  }
+
+  async function toggleNotionExpand(id, type) {
+    if (NS.expanded.has(id)) {
+      NS.expanded.delete(id);
+      renderNotionTree();
+      return;
+    }
+    NS.expanded.add(id);
+    if (!NS.childrenMap.has(id)) {
+      NS.loading.add(id);
+      renderNotionTree();
+      try {
+        const data = await api('GET', `/api/notion/children?id=${encodeURIComponent(id)}&type=${encodeURIComponent(type)}`);
+        const items = data.items || [];
+        items.forEach(i => {
+          NS.titleMap.set(i.id, i.title);
+          NS.typeMap.set(i.id, i.type);
+        });
+        NS.childrenMap.set(id, items);
+        // 상위 DB가 선택된 상태면 자식 페이지 자동 선택
+        if (NS.selectedDbs.has(id)) {
+          items.forEach(i => { if (i.type !== 'database') NS.selected.add(i.id); });
+        }
+      } catch (e) {
+        NS.childrenMap.set(id, []);
+        showToast(`로딩 실패: ${e.message}`, 'error');
+      } finally {
+        NS.loading.delete(id);
+        renderNotionTree();
+      }
+    } else {
+      renderNotionTree();
+    }
+  }
+
+  function renderNotionTree() {
+    const list = document.getElementById('notion-page-list');
+    if (!NS.rootItems.length) {
+      list.innerHTML = `<p class="text-center text-xs text-gray-600 py-8">페이지/DB 없음. 통합에 공유했는지 확인하세요.</p>`;
+      return;
+    }
+    list.innerHTML = NS.rootItems.map(i => renderNotionItem(i, 0)).join('');
+  }
+
+  function renderNotionItem(item, depth) {
+    const isExpanded = NS.expanded.has(item.id);
+    const isLoading  = NS.loading.has(item.id);
+    const isDB       = item.type === 'database';
+    const checked    = NS.selected.has(item.id);
+    const padLeft    = 8 + depth * 16;
+
+    const chevron = item.has_children ? `
+      <button onclick="event.stopPropagation(); toggleNotionExpand('${item.id}', '${item.type}')"
+        class="w-4 h-4 flex items-center justify-center text-gray-500 hover:text-gray-200 flex-shrink-0">
+        ${isLoading
+          ? `<div class="w-3 h-3 border-2 border-gray-500 border-t-transparent rounded-full spin"></div>`
+          : `<svg class="w-3 h-3 transition-transform" style="${isExpanded ? 'transform:rotate(90deg)' : ''}" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M9 5l7 7-7 7"/></svg>`}
+      </button>` : `<span class="w-4 h-4 flex-shrink-0"></span>`;
+
+    const dbChecked = isDB && NS.selectedDbs.has(item.id);
+    const checkbox = `
+      <input type="checkbox" ${isDB ? (dbChecked ? 'checked' : '') : (checked ? 'checked' : '')}
+        onchange="${isDB ? `toggleNotionDb('${item.id}')` : `toggleNotionPage('${item.id}')`}"
+        class="w-3.5 h-3.5 accent-blue-500 flex-shrink-0">`;
+
+    const icon = isDB ? `
+      <div class="w-6 h-6 rounded-md bg-blue-950 flex items-center justify-center text-blue-400 flex-shrink-0" title="데이터베이스">
+        <svg class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5h18v2H3V5zm0 4h18v2H3V9zm0 4h18v2H3v-2zm0 4h18v2H3v-2z"/></svg>
+      </div>` : `
+      <div class="w-6 h-6 rounded-md bg-gray-800 flex items-center justify-center text-gray-400 flex-shrink-0" title="페이지">
+        <svg class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M4.459 4.208c.746.606 1.026.56 2.428.466l13.215-.793c.28 0 .047-.28-.046-.326L17.86 1.968c-.42-.326-.981-.7-2.055-.607L3.01 2.295c-.466.046-.56.28-.374.466zm.793 3.08v13.904c0 .747.373 1.027 1.214.98l14.523-.84c.841-.046.935-.56.935-1.167V6.354c0-.606-.233-.933-.748-.887l-15.177.887c-.56.047-.747.327-.747.933z"/>
+        </svg>
+      </div>`;
+
+    let html = `
+      <div class="flex items-center gap-1.5 py-1.5 rounded-lg hover:bg-gray-800" style="padding-left:${padLeft}px; padding-right:8px">
+        ${chevron}
+        ${checkbox}
+        ${icon}
+        <p class="text-xs ${isDB ? 'text-blue-300 font-medium' : 'text-gray-300'} flex-1 truncate">${esc(item.title)}</p>
+      </div>`;
+
+    if (isExpanded) {
+      const children = NS.childrenMap.get(item.id) || [];
+      if (!isLoading && !children.length) {
+        html += `<p class="text-xs text-gray-600 py-1" style="padding-left:${padLeft + 24}px">하위 항목 없음</p>`;
+      } else {
+        html += children.map(c => renderNotionItem(c, depth + 1)).join('');
+      }
+    }
+    return html;
+  }
+
+  function toggleNotionPage(id) {
+    if (NS.selected.has(id)) NS.selected.delete(id);
+    else NS.selected.add(id);
+    updateNotionFooter();
+  }
+
+  async function toggleNotionDb(id) {
+    if (NS.selectedDbs.has(id)) {
+      NS.selectedDbs.delete(id);
+      // 자식 페이지 전체 선택 해제
+      (NS.childrenMap.get(id) || []).forEach(c => NS.selected.delete(c.id));
+    } else {
+      NS.selectedDbs.add(id);
+      // 펼쳐서 자식 로드 후 자동 선택
+      if (!NS.expanded.has(id)) {
+        await toggleNotionExpand(id, 'database');
+      } else {
+        (NS.childrenMap.get(id) || []).forEach(c => {
+          if (c.type !== 'database') NS.selected.add(c.id);
+        });
+        renderNotionTree();
+      }
+    }
+    updateNotionFooter();
+  }
+
+  function toggleNotionSelectAll(checked) {
+    NS.selected.clear();
+    NS.selectedDbs.clear();
+    if (checked) {
+      NS.rootItems.forEach(i => {
+        if (i.type === 'database') {
+          NS.selectedDbs.add(i.id);
+          (NS.childrenMap.get(i.id) || []).forEach(c => {
+            if (c.type !== 'database') NS.selected.add(c.id);
+          });
+        } else {
+          NS.selected.add(i.id);
+        }
+      });
+    }
+    renderNotionTree();
+    updateNotionFooter();
+  }
+
+  function updateNotionFooter() {
+    const total = NS.selected.size + NS.selectedDbs.size;
+    const dbCount = NS.selectedDbs.size;
+    let text = '선택된 항목 없음';
+    if (total > 0) {
+      text = dbCount > 0
+        ? `페이지 ${NS.selected.size}개 + DB ${dbCount}개 선택됨`
+        : `${NS.selected.size}개 선택됨`;
+    }
+    document.getElementById('notion-selected-count').textContent = text;
+    document.getElementById('notion-upload-btn').disabled = total === 0;
+  }
+
+  function debounceNotionSearch(val) {
+    clearTimeout(NS.searchTimer);
+    NS.searchTimer = setTimeout(() => loadNotionRoot(val), 400);
+  }
+
+  async function uploadSelectedNotionPages() {
+    if (!NS.selected.size || !S.serverId) return;
+    const btn = document.getElementById('notion-upload-btn');
+    btn.disabled = true; btn.textContent = '업로드 중...';
+
+    const includeSubpages    = document.getElementById('notion-opt-subpages').checked;
+    const includeAttachments = document.getElementById('notion-opt-attachments').checked;
+
+    // DB 선택 시 자식 페이지를 실시간 조회해서 추가
+    for (const dbId of NS.selectedDbs) {
+      try {
+        const data = await api('GET', `/api/notion/children?id=${encodeURIComponent(dbId)}&type=database`);
+        (data.items || []).forEach(i => {
+          NS.selected.add(i.id);
+          NS.titleMap.set(i.id, i.title);
+        });
+      } catch (_) {}
+    }
+    const toUpload = Array.from(NS.selected).map(id => ({
+      id, title: NS.titleMap.get(id) || 'Untitled',
+    }));
+    hideNotionModal();
+    showToast(`${toUpload.length}개 페이지 가져오는 중... (하위 페이지/첨부파일 처리에 시간이 걸릴 수 있어요)`, 'info');
+
+    for (const p of toUpload) {
+      try {
+        const data = await api('POST', `/api/servers/${S.serverId}/upload-from-notion`, {
+          page_id:             p.id,
+          title:               p.title,
+          include_subpages:    includeSubpages,
+          include_attachments: includeAttachments,
+        });
+        (data.queued || []).forEach(q => {
+          S.files.push({ id: q.file_id, name: q.name, size: 0, status: 'uploading', error: null });
+        });
+        renderFiles();
+        startPolling();
+        if (data.skipped && data.skipped.length) {
+          showToast(`${data.skipped.length}개 첨부파일 건너뜀: ${data.skipped[0].reason}`, 'warn');
+        }
+        const cnt = (data.queued || []).length;
+        showToast(`'${p.title}': ${cnt}개 파일 업로드 시작`, 'info');
+      } catch (e) {
+        showToast(`${p.title}: ${e.message}`, 'error');
+      }
+    }
+    btn.disabled = false; btn.textContent = '업로드';
+  }
+
+  // TEMP_SVG_DEBUG ───────────────────────────────────────────────────────────
+  async function showSvgDebug() {
+    document.getElementById('svg-debug-modal').classList.remove('hidden');
+    const list = document.getElementById('svg-debug-list');
+    list.innerHTML = `<p class="text-center text-xs text-gray-600 py-6">불러오는 중...</p>`;
+    try {
+      const data = await api('GET', '/api/debug/svg-pdfs');
+      const files = data.files || [];
+      if (!files.length) {
+        list.innerHTML = `<p class="text-center text-xs text-gray-600 py-6">변환된 PDF 없음. SVG 파일을 업로드하면 여기 나타납니다.</p>`;
+        return;
+      }
+      list.innerHTML = files.map(f => {
+        const date = new Date(f.mtime * 1000).toLocaleString();
+        return `
+          <div class="flex items-center gap-2 px-3 py-2 rounded-lg hover:bg-gray-800 group">
+            <div class="w-7 h-7 rounded-md bg-red-950 flex items-center justify-center text-[9px] font-bold text-red-400 flex-shrink-0">PDF</div>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs text-gray-200 truncate">${esc(f.name)}</p>
+              <p class="text-[10px] text-gray-600">${fmtSize(f.size)} · ${date}</p>
+            </div>
+            <a href="/api/debug/svg-pdfs/${encodeURIComponent(f.name)}" target="_blank"
+              class="px-2 py-1 bg-blue-600 hover:bg-blue-500 rounded text-[10px] text-white">열기</a>
+            <button onclick="deleteSvgDebug('${esc(f.name)}')"
+              class="p-1 rounded hover:bg-red-900/50 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition" title="삭제">
+              <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7"/></svg>
+            </button>
+          </div>`;
+      }).join('');
+    } catch (e) {
+      list.innerHTML = `<p class="text-center text-xs text-red-400 py-6">${esc(e.message)}</p>`;
+    }
+  }
+
+  function hideSvgDebug() {
+    document.getElementById('svg-debug-modal').classList.add('hidden');
+  }
+
+  async function deleteSvgDebug(name) {
+    try {
+      await api('DELETE', `/api/debug/svg-pdfs/${encodeURIComponent(name)}`);
+      showSvgDebug();
+    } catch (e) {
+      showToast(e.message, 'error');
+    }
+  }
+
+  // ── Boot ──────────────────────────────────────────────────────────────────
+  marked.setOptions({ breaks: true, gfm: true });
+  init();
+</script>
+</body>
+</html>
