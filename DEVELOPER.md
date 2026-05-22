@@ -5,7 +5,7 @@
 ---
 
 ## 아키텍처 개요
-
+m
 ```
 브라우저 (index.html)
     │  Fetch / EventSource

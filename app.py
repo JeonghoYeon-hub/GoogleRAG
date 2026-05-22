@@ -38,6 +38,15 @@ NOTION_API_KEY = os.getenv("NOTION_API_KEY", "")
 DRIVE_SCOPES             = ["https://www.googleapis.com/auth/drive.readonly"]
 OAUTH_REDIRECT_URI        = os.getenv("OAUTH_REDIRECT_URI", "http://localhost:8000/auth/callback")
 
+# 선택 가능한 Gemini 모델 (UI 드롭다운에 표시)
+GEMINI_MODELS = [
+    "gemini-3.1-pro-preview",
+    "gemini-3-flash-preview",
+    "gemini-3.1-flash-lite-preview",
+    "gemini-2.5-flash",
+]
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+
 # client_secret.json 경로: 환경변수 → 프로젝트 루트 자동 탐지
 _env_secret_file = os.getenv("GOOGLE_CLIENT_SECRET_FILE", "")
 CLIENT_SECRET_FILE = (
@@ -596,9 +605,15 @@ def init_db():
                     alias      TEXT NOT NULL DEFAULT '',
                     store_name TEXT NOT NULL,
                     api_key    TEXT NOT NULL,
+                    model      TEXT NOT NULL DEFAULT 'gemini-2.5-flash',
                     created_at REAL NOT NULL
                 )
             """)
+            # 기존 servers 테이블에 model 컬럼 추가 (없는 경우)
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(servers)").fetchall()}
+            if "model" not in cols:
+                conn.execute("ALTER TABLE servers ADD COLUMN model TEXT NOT NULL DEFAULT 'gemini-2.5-flash'")
+                print("[DB] servers.model 컬럼 추가 완료")
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS files (
                     id        TEXT PRIMARY KEY,
@@ -650,23 +665,29 @@ def db_load_servers():
                 "alias":      row["alias"],
                 "store_name": row["store_name"],
                 "api_key":    row["api_key"],
+                "model":      row["model"] if "model" in row.keys() else DEFAULT_GEMINI_MODEL,
                 "files":      files,
             }
     if servers:
         print(f"[DB] 서버 {len(servers)}개 복원 완료")
 
 
-def db_add_server(svid: str, alias: str, api_key: str, store_name: str):
+def db_add_server(svid: str, alias: str, api_key: str, store_name: str, model: str = DEFAULT_GEMINI_MODEL):
     with get_db() as conn:
         conn.execute(
-            "INSERT INTO servers (id, alias, store_name, api_key, created_at) VALUES (?,?,?,?,?)",
-            (svid, alias, store_name, api_key, time.time()),
+            "INSERT INTO servers (id, alias, store_name, api_key, model, created_at) VALUES (?,?,?,?,?,?)",
+            (svid, alias, store_name, api_key, model, time.time()),
         )
 
 
 def db_update_alias(svid: str, alias: str):
     with get_db() as conn:
         conn.execute("UPDATE servers SET alias=? WHERE id=?", (alias, svid))
+
+
+def db_update_model(svid: str, model: str):
+    with get_db() as conn:
+        conn.execute("UPDATE servers SET model=? WHERE id=?", (model, svid))
 
 
 def db_add_file(svid: str, fid: str, name: str, size: int):
@@ -823,10 +844,10 @@ STRICT_SYSTEM_INSTRUCTION = """당신은 사용자가 업로드한 문서만을 
 6. 사용자가 일반 지식 질문(예: "프랑스의 수도는?")을 해도, 그것이 업로드된 문서에 없다면 위 3번 문장으로 답하세요."""
 
 
-def _sync_query(api_key: str, store_name: str, query: str) -> dict:
+def _sync_query(api_key: str, store_name: str, query: str, model: str = DEFAULT_GEMINI_MODEL) -> dict:
     client = make_client(api_key)
     resp = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=model,
         contents=query,
         config=types.GenerateContentConfig(
             system_instruction=STRICT_SYSTEM_INSTRUCTION,
@@ -898,10 +919,12 @@ class ServerIn(BaseModel):
     alias: str
     api_key: Optional[str] = None
     store_name: Optional[str] = None  # 기존 스토어 가져오기 시 사용
+    model: Optional[str] = None       # 선택: GEMINI_MODELS 중 하나
 
 
 class ServerPatchIn(BaseModel):
-    alias: str
+    alias: Optional[str] = None
+    model: Optional[str] = None
 
 
 class QueryIn(BaseModel):
@@ -922,6 +945,8 @@ async def get_config():
         "has_server_api_key":  bool(SERVER_API_KEY),
         "has_drive_oauth":     bool(CLIENT_SECRET_FILE),
         "has_notion":          bool(NOTION_API_KEY),
+        "gemini_models":       GEMINI_MODELS,
+        "default_gemini_model": DEFAULT_GEMINI_MODEL,
     }
 
 
@@ -1149,6 +1174,7 @@ async def list_servers():
                 "id":          svid,
                 "alias":       s["alias"],
                 "store_name":  s["store_name"],
+                "model":       s.get("model", DEFAULT_GEMINI_MODEL),
                 "file_count":  len(s["files"]),
                 "ready_count": sum(1 for f in s["files"] if f["status"] == "ready"),
             }
@@ -1163,6 +1189,10 @@ async def create_server(body: ServerIn):
         raise HTTPException(400, "API 키가 필요합니다")
     if not body.alias.strip():
         raise HTTPException(400, "별칭을 입력해주세요")
+
+    model = (body.model or DEFAULT_GEMINI_MODEL).strip()
+    if model not in GEMINI_MODELS:
+        raise HTTPException(400, f"지원하지 않는 모델: {model}")
 
     svid = str(uuid.uuid4())
 
@@ -1188,9 +1218,10 @@ async def create_server(body: ServerIn):
             "alias":      body.alias.strip(),
             "store_name": store_name,
             "api_key":    key,
+            "model":      model,
             "files":      existing_docs,
         }
-    db_add_server(svid, body.alias.strip(), key, store_name)
+    db_add_server(svid, body.alias.strip(), key, store_name, model)
     # 동기화된 파일 DB에 저장
     now = time.time()
     with get_db() as conn:
@@ -1199,7 +1230,7 @@ async def create_server(body: ServerIn):
                 "INSERT OR IGNORE INTO files (id, server_id, name, size, status, created_at) VALUES (?,?,?,?,'ready',?)",
                 (doc["id"], svid, doc["name"], doc["size"], now),
             )
-    return {"id": svid, "alias": body.alias.strip(), "store_name": store_name, "synced_count": len(existing_docs)}
+    return {"id": svid, "alias": body.alias.strip(), "store_name": store_name, "model": model, "synced_count": len(existing_docs)}
 
 
 @app.get("/api/servers/{svid}")
@@ -1218,14 +1249,32 @@ async def get_server(svid: str):
 
 @app.patch("/api/servers/{svid}")
 async def update_server(svid: str, body: ServerPatchIn):
-    if not body.alias.strip():
-        raise HTTPException(400, "별칭을 입력해주세요")
     with lock:
         if svid not in servers:
             raise HTTPException(404, "서버를 찾을 수 없습니다")
-        servers[svid]["alias"] = body.alias.strip()
-    db_update_alias(svid, body.alias.strip())
-    return {"id": svid, "alias": body.alias.strip()}
+
+    if body.alias is not None:
+        alias = body.alias.strip()
+        if not alias:
+            raise HTTPException(400, "별칭을 입력해주세요")
+        with lock:
+            servers[svid]["alias"] = alias
+        db_update_alias(svid, alias)
+
+    if body.model is not None:
+        model = body.model.strip()
+        if model not in GEMINI_MODELS:
+            raise HTTPException(400, f"지원하지 않는 모델: {model}")
+        with lock:
+            servers[svid]["model"] = model
+        db_update_model(svid, model)
+
+    with lock:
+        return {
+            "id":    svid,
+            "alias": servers[svid]["alias"],
+            "model": servers[svid].get("model", DEFAULT_GEMINI_MODEL),
+        }
 
 
 @app.post("/api/servers/{svid}/upload")
@@ -1296,7 +1345,8 @@ async def query_rag(svid: str, body: QueryIn):
     loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
-            executor, _sync_query, s["api_key"], s["store_name"], body.query
+            executor, _sync_query, s["api_key"], s["store_name"], body.query,
+            s.get("model", DEFAULT_GEMINI_MODEL),
         )
     except Exception as e:
         raise HTTPException(500, str(e))
@@ -1395,6 +1445,103 @@ def _attachment_filename(url: str, fallback_prefix: str = "attachment") -> str:
     return f"{_safe_filename(fallback_prefix)}.bin"
 
 
+def _prop_value_to_text(prop: dict) -> str:
+    """Notion 페이지 속성(property) 하나를 사람이 읽을 수 있는 문자열로 변환."""
+    if not prop:
+        return ""
+    ptype = prop.get("type", "")
+    val = prop.get(ptype)
+    if val is None:
+        return ""
+    if ptype in ("title", "rich_text"):
+        return _rich_text_to_md(val).replace("\n", " ").replace("|", "\\|")
+    if ptype == "number":
+        return "" if val is None else str(val)
+    if ptype == "select":
+        return val.get("name", "") if isinstance(val, dict) else ""
+    if ptype == "multi_select":
+        return ", ".join(v.get("name", "") for v in val) if isinstance(val, list) else ""
+    if ptype == "status":
+        return val.get("name", "") if isinstance(val, dict) else ""
+    if ptype == "date":
+        if not isinstance(val, dict):
+            return ""
+        s = val.get("start", "") or ""
+        e = val.get("end", "") or ""
+        return f"{s} ~ {e}" if e else s
+    if ptype == "checkbox":
+        return "✓" if val else ""
+    if ptype in ("url", "email", "phone_number"):
+        return str(val) if val else ""
+    if ptype == "people":
+        return ", ".join(p.get("name", "") for p in val) if isinstance(val, list) else ""
+    if ptype == "files":
+        names = []
+        for f in val or []:
+            names.append(f.get("name", "")
+                         or (f.get("external") or {}).get("url", "")
+                         or (f.get("file") or {}).get("url", ""))
+        return ", ".join(filter(None, names))
+    if ptype in ("created_time", "last_edited_time"):
+        return str(val) if val else ""
+    if ptype in ("created_by", "last_edited_by"):
+        return val.get("name", "") if isinstance(val, dict) else ""
+    if ptype == "formula":
+        if not isinstance(val, dict):
+            return ""
+        ftype = val.get("type")
+        return str(val.get(ftype, "") or "")
+    if ptype == "relation":
+        return f"({len(val)}개 관계)" if isinstance(val, list) else ""
+    if ptype == "rollup":
+        if not isinstance(val, dict):
+            return ""
+        rtype = val.get("type")
+        rval = val.get(rtype)
+        if isinstance(rval, list):
+            return ", ".join(_prop_value_to_text({"type": (v.get("type") or "rich_text"), (v.get("type") or "rich_text"): v.get(v.get("type") or "rich_text")}) for v in rval if isinstance(v, dict))
+        return str(rval) if rval is not None else ""
+    return ""
+
+
+def _database_to_md_table(database_id: str, notion, title_hint: str = "") -> str:
+    """Notion 데이터베이스를 마크다운 테이블로 변환."""
+    try:
+        db_info = _retrieve_db_info(notion, database_id)
+    except Exception as e:
+        return f"_(데이터베이스 로딩 실패: {e})_"
+
+    db_title = _rich_text_to_md(db_info.get("title", [])) or title_hint or "Untitled Database"
+    # 컬럼 순서는 db_info["properties"]의 dict 순서를 따름 (Python 3.7+)
+    col_names = list((db_info.get("properties") or {}).keys())
+    if not col_names:
+        return f"### 📊 {db_title}\n_(빈 데이터베이스)_"
+
+    # 모든 행 조회 (data_sources fallback 포함). 페이지네이션은 단순화.
+    try:
+        rows = _query_database_rows(notion, database_id, page_size=100)
+    except Exception as e:
+        rows = [{"_error": str(e)}]
+
+    header = "| " + " | ".join(col_names) + " |"
+    sep = "|" + "|".join("---" for _ in col_names) + "|"
+    body_lines = []
+    for row in rows:
+        if "_error" in row:
+            body_lines.append(f"_(이후 행 로딩 실패: {row['_error']})_")
+            continue
+        props = row.get("properties", {}) or {}
+        cells = []
+        for c in col_names:
+            text = _prop_value_to_text(props.get(c, {}))
+            # 줄바꿈은 공백으로, 파이프는 escape
+            text = text.replace("\n", " ").replace("|", "\\|").strip()
+            cells.append(text)
+        body_lines.append("| " + " | ".join(cells) + " |")
+
+    return f"### 📊 {db_title}\n\n{header}\n{sep}\n" + "\n".join(body_lines)
+
+
 def _block_to_md(block, notion, depth: int, attachments: list,
                  sub_pages: list, page_title_prefix: str) -> str:
     """블록 → markdown. 첨부/하위페이지를 인자로 받은 리스트에 누적."""
@@ -1432,6 +1579,10 @@ def _block_to_md(block, notion, depth: int, attachments: list,
         # 재귀 처리용으로 누적
         sub_pages.append({"id": block["id"], "title": data.get("title", "Untitled")})
         line = f"**↳ 하위 페이지: {data.get('title','')}**"
+    elif btype == "child_database":
+        # 인라인 데이터베이스를 마크다운 테이블로 즉시 변환
+        db_title = data.get("title", "Untitled Database")
+        line = _database_to_md_table(block["id"], notion, title_hint=db_title)
     elif btype == "image":
         f = data.get("external") or data.get("file") or {}
         url = f.get("url", "")
@@ -1488,7 +1639,8 @@ def _sync_notion_page_to_md(
     max_depth: int = 5,
     visited: Optional[set] = None,
 ) -> dict:
-    """페이지 → {title, markdown, attachments}.
+    """페이지/데이터베이스 → {title, markdown, attachments}.
+    page_id가 데이터베이스면 행을 표로 변환 + 각 행 페이지의 본문도 섹션으로 통합.
     하위 페이지는 재귀적으로 같은 markdown에 섹션으로 통합."""
     if visited is None:
         visited = set()
@@ -1497,7 +1649,59 @@ def _sync_notion_page_to_md(
     visited.add(page_id)
 
     notion = NotionClient(auth=NOTION_API_KEY)
-    page = notion.pages.retrieve(page_id=page_id)
+
+    # ID가 데이터베이스(=data_source)인지 페이지인지 자동 감지
+    page = None
+    is_database = False
+    try:
+        page = notion.pages.retrieve(page_id=page_id)
+    except NotionAPIError:
+        # 페이지가 아니면 데이터베이스/데이터소스 시도
+        try:
+            db_info = _retrieve_db_info(notion, page_id)
+            is_database = True
+        except NotionAPIError as e:
+            raise e
+
+    if is_database:
+        db_title = _rich_text_to_md(db_info.get("title", [])) or "Untitled Database"
+        heading_level = min(depth + 1, 6)
+        table_md = _database_to_md_table(page_id, notion, title_hint=db_title)
+        md_parts = [f"{'#' * heading_level} {db_title}", "", table_md]
+
+        # 하위(=각 행 = page) 처리도 옵션에 따라
+        if include_subpages and depth < max_depth:
+            try:
+                child_pages = _query_database_rows(notion, page_id, page_size=100)
+            except Exception:
+                child_pages = []
+
+            collected_attachments: list = []
+            for child in child_pages:
+                try:
+                    sub = _sync_notion_page_to_md(
+                        child["id"], include_subpages, include_attachments,
+                        depth + 1, max_depth, visited,
+                    )
+                    if sub["markdown"]:
+                        md_parts.append("\n---\n")
+                        md_parts.append(sub["markdown"])
+                    collected_attachments.extend(sub["attachments"])
+                except Exception as e:
+                    md_parts.append(f"\n_(행 페이지 로딩 실패: {e})_\n")
+
+            return {
+                "title":       db_title,
+                "markdown":    "\n\n".join(md_parts),
+                "attachments": collected_attachments if include_attachments else [],
+            }
+
+        return {
+            "title":       db_title,
+            "markdown":    "\n\n".join(md_parts),
+            "attachments": [],
+        }
+
     title = _page_title(page)
     safe_prefix = _safe_filename(title)
     attachments: list = []
@@ -1546,34 +1750,109 @@ def _download_url_to_temp(url: str, suffix: str) -> tuple[str, int]:
 
 def _item_title(obj) -> str:
     """페이지/데이터베이스 통합 제목 추출"""
-    if obj.get("object") == "database":
+    if obj.get("object") in ("database", "data_source"):
         return _rich_text_to_md(obj.get("title", [])) or "Untitled Database"
     return _page_title(obj)
 
 
 def _sync_notion_search(query: str = "") -> list:
+    """Notion 검색: page와 database(=data_source)를 각각 조회해서 합침.
+    Notion 2025 API에서 'database' 객체는 'data_source'로 마이그레이션됨.
+    필터값도 'database' → 'data_source'로 변경됨."""
     notion = NotionClient(auth=NOTION_API_KEY)
-    res = notion.search(query=query, page_size=50)
     out = []
-    for o in res.get("results", []):
-        otype = o.get("object", "page")  # "page" or "database"
-        out.append({
-            "id":               o["id"],
-            "title":            _item_title(o),
-            "type":             otype,
-            "has_children":     True,
-            "url":              o.get("url", ""),
-            "last_edited_time": o.get("last_edited_time", ""),
-        })
+    seen_ids = set()
+
+    def _collect(filter_value: str, ui_type: str):
+        try:
+            res = notion.search(
+                query=query,
+                filter={"value": filter_value, "property": "object"},
+                page_size=100,
+            )
+        except Exception:
+            return
+        for o in res.get("results", []):
+            if o["id"] in seen_ids:
+                continue
+            seen_ids.add(o["id"])
+            out.append({
+                "id":               o["id"],
+                "title":            _item_title(o),
+                "type":             ui_type,  # 프론트엔드용: "page" or "database"
+                "has_children":     True,
+                "url":              o.get("url", ""),
+                "last_edited_time": o.get("last_edited_time", ""),
+            })
+
+    # 데이터베이스(=data_source)를 먼저 (상단에 표시), 그 다음 페이지
+    # 구 API 호환을 위해 'database' 필터도 시도
+    _collect("data_source", "database")
+    _collect("database", "database")
+    _collect("page", "page")
     return out
+
+
+def _retrieve_db_info(notion, db_or_ds_id: str) -> dict:
+    """DB 또는 data_source의 메타데이터 조회.
+    Notion 2025 API에서는 검색 결과가 data_source ID를 반환하므로 그 경로를 먼저 시도."""
+    try:
+        return notion.request(method="GET", path=f"data_sources/{db_or_ds_id}")
+    except Exception:
+        pass
+    return notion.databases.retrieve(database_id=db_or_ds_id)
+
+
+def _query_database_rows(notion, database_id: str, page_size: int = 100) -> list:
+    """DB 행 조회. Notion 2025 API의 data_sources 마이그레이션에 대응.
+    검색에서 받은 ID는 보통 data_source ID이므로 그 경로를 먼저 시도한다."""
+    # 1차 시도: data_sources/{id}/query (Notion 2025)
+    try:
+        r = notion.request(
+            method="POST",
+            path=f"data_sources/{database_id}/query",
+            body={"page_size": page_size},
+        )
+        return r.get("results", [])
+    except Exception:
+        pass
+
+    # 2차 시도: 기존 databases.query (구 API, 단일 소스 DB)
+    try:
+        res = notion.databases.query(database_id=database_id, page_size=page_size)
+        return res.get("results", [])
+    except Exception:
+        pass
+
+    # 3차 시도: databases.retrieve로 받은 data_sources 목록으로 각각 쿼리
+    try:
+        db_info = notion.databases.retrieve(database_id=database_id)
+    except Exception:
+        return []
+    data_sources = db_info.get("data_sources") or []
+    results = []
+    for ds in data_sources:
+        ds_id = ds.get("id")
+        if not ds_id:
+            continue
+        try:
+            r = notion.request(
+                method="POST",
+                path=f"data_sources/{ds_id}/query",
+                body={"page_size": page_size},
+            )
+            results.extend(r.get("results", []))
+        except Exception:
+            continue
+    return results
 
 
 def _sync_notion_children(parent_id: str, parent_type: str) -> list:
     notion = NotionClient(auth=NOTION_API_KEY)
     out = []
     if parent_type == "database":
-        res = notion.databases.query(database_id=parent_id, page_size=100)
-        for p in res.get("results", []):
+        rows = _query_database_rows(notion, parent_id, page_size=100)
+        for p in rows:
             out.append({
                 "id":               p["id"],
                 "title":            _item_title(p),
@@ -1654,6 +1933,11 @@ async def notion_children(id: str, type: str = "page"):
         items = await loop.run_in_executor(executor, _sync_notion_children, id, type)
     except NotionAPIError as e:
         raise HTTPException(400, f"Notion API 오류: {e}")
+    except Exception as e:
+        # 500을 그대로 보내면 클라이언트에서 원인 파악 불가 → 메시지 노출
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(500, f"Notion children 조회 실패: {type(e).__name__}: {e}")
     return {"items": items}
 
 

@@ -1,7 +1,6 @@
 # 비밀
 .env
 client_secret.json
-*_secret*.json
 
 # 런타임 데이터
 sessions.db

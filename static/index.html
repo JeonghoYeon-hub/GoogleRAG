@@ -268,6 +268,15 @@
           class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm
                  placeholder-gray-600 focus:outline-none focus:border-blue-500 transition">
       </div>
+      <div>
+        <label class="block text-xs font-medium text-gray-400 mb-1">Gemini 모델</label>
+        <select id="new-model"
+          class="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-sm
+                 focus:outline-none focus:border-blue-500 transition">
+          <!-- options populated from /api/config -->
+        </select>
+        <p class="mt-1 text-xs text-gray-600">서버 생성 후에도 변경 가능합니다.</p>
+      </div>
     </div>
     <div class="flex gap-2 mt-4">
       <button onclick="hideCreateServerModal()"
@@ -497,6 +506,16 @@
         </div>
       </div>
 
+      <!-- Gemini 모델 선택기 -->
+      <div id="model-selector-wrap" class="hidden px-3 pb-2">
+        <label class="block text-xs font-medium text-gray-500 mb-1">Gemini 모델</label>
+        <select id="model-selector" onchange="onModelChange(this.value)"
+          class="w-full px-2 py-1.5 bg-gray-800 hover:bg-gray-750 border border-gray-700
+                 rounded-lg text-xs focus:outline-none focus:border-blue-500 transition">
+          <!-- options populated dynamically -->
+        </select>
+      </div>
+
       <div class="mx-3 border-t border-gray-800 mb-2"></div>
 
       <!-- Drop zone -->
@@ -681,7 +700,12 @@
       const cfg = await api('GET', '/api/config');
       S.hasServerKey = cfg.has_server_api_key;
       S.hasDriveOAuth = cfg.has_drive_oauth;
-    } catch (_) {}
+      S.geminiModels = cfg.gemini_models || ['gemini-2.5-flash'];
+      S.defaultModel = cfg.default_gemini_model || S.geminiModels[0];
+    } catch (_) {
+      S.geminiModels = ['gemini-2.5-flash'];
+      S.defaultModel = 'gemini-2.5-flash';
+    }
 
     // 등록된 서버가 없으면 최초 설정 모달
     let existingServers = [];
@@ -903,6 +927,22 @@
     showToast('Google Drive 연결이 해제되었습니다.', 'info');
   }
 
+  async function onModelChange(model) {
+    if (!S.serverId || !model) return;
+    try {
+      const res = await api('PATCH', `/api/servers/${S.serverId}`, { model });
+      const sv = S.serverList.find(s => s.id === S.serverId);
+      if (sv) sv.model = (res && res.model) || model;
+      showToast(`모델: ${model}`, 'info');
+    } catch (e) {
+      showToast(`모델 변경 실패: ${e.message}`, 'error');
+      // 변경 실패 시 원래 값으로 되돌리기
+      const sv = S.serverList.find(s => s.id === S.serverId);
+      const sel = document.getElementById('model-selector');
+      if (sv && sel) _populateModelOptions(sel, sv.model || S.defaultModel);
+    }
+  }
+
   // ── Server Management ─────────────────────────────────────────────────────
   async function loadServers() {
     try {
@@ -924,6 +964,16 @@
       S.files = data.files || [];
     } catch (_) {}
 
+    // 모델 선택기 동기화
+    const sv = S.serverList.find(s => s.id === id);
+    const currentModel = (sv && sv.model) || S.defaultModel;
+    const wrap = document.getElementById('model-selector-wrap');
+    const sel  = document.getElementById('model-selector');
+    if (wrap && sel) {
+      _populateModelOptions(sel, currentModel);
+      wrap.classList.remove('hidden');
+    }
+
     renderServerDropdown();
     renderAll();
     startPolling();
@@ -943,12 +993,20 @@
     else setTimeout(() => document.getElementById('new-alias').focus(), 50);
   }
 
+  function _populateModelOptions(selectEl, currentValue) {
+    const models = S.geminiModels || ['gemini-2.5-flash'];
+    selectEl.innerHTML = models.map(m =>
+      `<option value="${esc(m)}" ${m === currentValue ? 'selected' : ''}>${esc(m)}</option>`
+    ).join('');
+  }
+
   function showCreateServerModal(prefillStoreName = '') {
     closeDropdown();
     _createMode = prefillStoreName ? 'import' : 'new';
     document.getElementById('new-alias').value = '';
     document.getElementById('new-api-key').value = '';
     document.getElementById('new-store-name').value = prefillStoreName;
+    _populateModelOptions(document.getElementById('new-model'), S.defaultModel);
     document.getElementById('create-server-error').classList.add('hidden');
     document.getElementById('create-server-modal').classList.remove('hidden');
     setCreateMode(_createMode);
@@ -979,11 +1037,13 @@
     const btn = document.getElementById('create-server-btn');
     btn.disabled = true; btn.textContent = _createMode === 'import' ? '가져오는 중...' : '생성 중...';
 
+    const model = document.getElementById('new-model').value || S.defaultModel;
     try {
       const data = await api('POST', '/api/servers', {
         alias,
         api_key:    apiKey || S.apiKey || null,
         store_name: storeName || null,
+        model,
       });
       hideCreateServerModal();
       await loadServers();
@@ -1933,19 +1993,15 @@
     const includeSubpages    = document.getElementById('notion-opt-subpages').checked;
     const includeAttachments = document.getElementById('notion-opt-attachments').checked;
 
-    // DB 선택 시 자식 페이지를 실시간 조회해서 추가
-    for (const dbId of NS.selectedDbs) {
-      try {
-        const data = await api('GET', `/api/notion/children?id=${encodeURIComponent(dbId)}&type=database`);
-        (data.items || []).forEach(i => {
-          NS.selected.add(i.id);
-          NS.titleMap.set(i.id, i.title);
-        });
-      } catch (_) {}
+    // 선택된 DB는 (1) 자체를 테이블로 업로드 (2) include_subpages=true면 백엔드가 행도 함께 처리
+    // 따라서 자식 페이지를 클라이언트에서 미리 펼칠 필요 없음 (백엔드가 처리)
+    const toUpload = [];
+    for (const id of NS.selected) {
+      toUpload.push({ id, title: NS.titleMap.get(id) || 'Untitled' });
     }
-    const toUpload = Array.from(NS.selected).map(id => ({
-      id, title: NS.titleMap.get(id) || 'Untitled',
-    }));
+    for (const dbId of NS.selectedDbs) {
+      toUpload.push({ id: dbId, title: (NS.titleMap.get(dbId) || 'Untitled Database') + ' (DB)' });
+    }
     hideNotionModal();
     showToast(`${toUpload.length}개 페이지 가져오는 중... (하위 페이지/첨부파일 처리에 시간이 걸릴 수 있어요)`, 'info');
 
