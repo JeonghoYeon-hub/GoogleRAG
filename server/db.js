@@ -3,7 +3,7 @@
 const { DatabaseSync } = require('node:sqlite');
 const path = require('path');
 
-const DB_PATH = path.join(process.cwd(), 'sessions.db');
+const DB_PATH = path.join(process.env.APP_DATA_DIR || process.cwd(), 'sessions.db');
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
 let _db = null;

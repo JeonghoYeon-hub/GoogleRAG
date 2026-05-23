@@ -26,3 +26,6 @@ Thumbs.db
 
 node_modules/
 package-lock.json
+
+# Electron 빌드 산출물
+dist/

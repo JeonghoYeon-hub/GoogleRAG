@@ -27,11 +27,12 @@ const GDOCS_EXPORT = {
 };
 
 function loadClientSecret() {
+  const baseDir = process.env.APP_DATA_DIR || process.cwd();
   const envFile = process.env.GOOGLE_CLIENT_SECRET_FILE || '';
   const filePath =
     envFile && fs.existsSync(envFile) ? envFile
-    : fs.existsSync(path.join(process.cwd(), 'client_secret.json'))
-      ? path.join(process.cwd(), 'client_secret.json')
+    : fs.existsSync(path.join(baseDir, 'client_secret.json'))
+      ? path.join(baseDir, 'client_secret.json')
       : null;
   if (!filePath) return null;
   try {

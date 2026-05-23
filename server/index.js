@@ -59,11 +59,13 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-// Static files
-app.use('/static', express.static(path.join(__dirname, '..', 'static')));
+// Static files — STATIC_DIR is set by main.js when running inside Electron
+// (asar.unpacked path), otherwise falls back to the sibling static/ directory.
+const staticDir = process.env.STATIC_DIR || path.join(__dirname, '..', 'static');
+app.use('/static', express.static(staticDir));
 
 app.get('/', (_req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'static', 'index.html'));
+  res.sendFile(path.join(staticDir, 'index.html'));
 });
 
 // ── Error handler ─────────────────────────────────────────────────────────────
