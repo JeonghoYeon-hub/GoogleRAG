@@ -1,6 +1,6 @@
 'use strict';
 
-const { DatabaseSync } = require('node:sqlite');
+const Database = require('better-sqlite3');
 const path = require('path');
 
 const DB_PATH = path.join(process.env.APP_DATA_DIR || process.cwd(), 'sessions.db');
@@ -10,9 +10,9 @@ let _db = null;
 
 function getDb() {
   if (!_db) {
-    _db = new DatabaseSync(DB_PATH);
-    _db.exec('PRAGMA journal_mode = WAL');
-    _db.exec('PRAGMA foreign_keys = ON');
+    _db = new Database(DB_PATH);
+    _db.pragma('journal_mode = WAL');
+    _db.pragma('foreign_keys = ON');
   }
   return _db;
 }
@@ -26,7 +26,7 @@ function initDb() {
 
   if (tables.has('sessions') && !tables.has('servers')) {
     console.log('[DB] 구 스키마 감지 → 마이그레이션 시작');
-    db.exec('PRAGMA foreign_keys = OFF');
+    db.pragma('foreign_keys = OFF');
     db.exec(`
       CREATE TABLE servers (
         id         TEXT PRIMARY KEY,
@@ -52,7 +52,7 @@ function initDb() {
       ALTER TABLE files_new RENAME TO files;
       DROP TABLE sessions;
     `);
-    db.exec('PRAGMA foreign_keys = ON');
+    db.pragma('foreign_keys = ON');
     console.log('[DB] 마이그레이션 완료');
   } else {
     db.exec(`
