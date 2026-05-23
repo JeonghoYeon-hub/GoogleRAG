@@ -1,0 +1,18 @@
+{
+  "name": "myrag",
+  "version": "1.2.0",
+  "description": "File RAG Search System",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "@notionhq/client": "^2.2.15",
+"dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-async-errors": "^3.1.1",
+    "googleapis": "^142.0.0",
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^9.0.1"
+  }
+}

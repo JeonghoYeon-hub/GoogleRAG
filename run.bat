@@ -7,8 +7,8 @@ echo   File RAG System
 echo ============================================
 echo.
 
-if not exist ".venv\Scripts\python.exe" (
-    echo [ERROR] Virtual environment not found.
+if not exist "node_modules" (
+    echo [ERROR] node_modules not found.
     echo         Run setup.bat first.
     echo.
     pause
@@ -21,11 +21,11 @@ if not exist ".env" (
     echo.
 )
 
-echo Server: http://localhost:8000
+echo Server: http://localhost:3000
 echo Press Ctrl+C or close this window to stop.
 echo.
 
-.venv\Scripts\python.exe app.py
+node server/index.js
 
 echo.
 echo Server stopped.
