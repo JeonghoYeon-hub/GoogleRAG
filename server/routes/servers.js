@@ -60,6 +60,7 @@ const upload = multer({
 // ── Background upload ─────────────────────────────────────────────────────────
 
 async function bgUpload(serverId, fileId, apiKey, storeName, tmpPath, displayName, mimeType) {
+  console.log(`[upload] start fid=${fileId} name=${displayName} size=${(() => { try { return fs.statSync(tmpPath).size; } catch { return '?'; }})()} mime=${mimeType}`);
   try {
     await gemini.uploadToStore(apiKey, storeName, displayName, tmpPath, mimeType);
     const srv = state.servers[serverId];
@@ -68,8 +69,10 @@ async function bgUpload(serverId, fileId, apiKey, storeName, tmpPath, displayNam
       if (f) f.status = 'ready';
     }
     db.updateFile(fileId, 'ready');
+    console.log(`[upload] ready fid=${fileId} name=${displayName}`);
   } catch (err) {
     const msg = String(err.message || err);
+    console.error(`[upload] FAILED fid=${fileId} name=${displayName}\n        ${msg}`);
     const srv = state.servers[serverId];
     if (srv) {
       const f = srv.files.find(f => f.id === fileId);
@@ -199,7 +202,8 @@ router.post('/:svid/upload', upload.single('file'), async (req, res) => {
   if (!s) return res.status(404).json({ detail: '서버를 찾을 수 없습니다' });
   if (!req.file) return res.status(400).json({ detail: '파일이 없습니다' });
 
-  const displayName = req.file.originalname || 'file';
+  // multer decodes multipart filename as latin1 — rebuild as UTF-8 for non-ASCII (e.g. Korean) names
+  const displayName = Buffer.from(req.file.originalname || 'file', 'latin1').toString('utf8');
   const tmpPath = req.file.path;
   const fileSize = req.file.size;
 

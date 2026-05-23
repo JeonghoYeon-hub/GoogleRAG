@@ -109,32 +109,52 @@ async function deleteDocument(apiKey, storeName, docId) {
 
 async function uploadToStore(apiKey, storeName, displayName, filePath, mimeType) {
   const fileData = fs.readFileSync(filePath);
-  const boundary = `boundary_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-  const metadata = JSON.stringify({ displayName });
 
-  const body = Buffer.concat([
-    Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n`),
-    Buffer.from(metadata),
-    Buffer.from(`\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`),
-    fileData,
-    Buffer.from(`\r\n--${boundary}--`),
-  ]);
-
-  const res = await fetch(
-    `${BASE}/upload/v1beta/${storeName}/documents?uploadType=multipart&key=${apiKey}`,
+  // Step 1: initiate resumable upload session (JSON metadata only, no bytes)
+  const initRes = await fetch(
+    `${BASE}/upload/v1beta/${storeName}:uploadToFileSearchStore`,
     {
-      method:  'POST',
-      headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
-      body,
+      method: 'POST',
+      headers: {
+        'x-goog-api-key':                     apiKey,
+        'Content-Type':                       'application/json',
+        'X-Goog-Upload-Protocol':             'resumable',
+        'X-Goog-Upload-Command':              'start',
+        'X-Goog-Upload-Header-Content-Length': String(fileData.length),
+        'X-Goog-Upload-Header-Content-Type':  mimeType,
+      },
+      // mimeType intentionally omitted from JSON body — Gemini's validator rejects long
+      // compound types like application/vnd.openxmlformats-... even though they are valid.
+      // The actual content type is conveyed via the X-Goog-Upload-Header-Content-Type header.
+      body: JSON.stringify({ displayName }),
     }
   );
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`업로드 실패 (${res.status}): ${text}`);
+  if (!initRes.ok) {
+    const text = await initRes.text();
+    throw new Error(`업로드 세션 시작 실패 (${initRes.status}): ${text}`);
   }
 
-  const op = await res.json();
+  const uploadUrl = initRes.headers.get('x-goog-upload-url') || initRes.headers.get('X-Goog-Upload-URL');
+  if (!uploadUrl) throw new Error('업로드 세션 URL이 응답에 없습니다');
+
+  // Step 2: upload bytes in a single chunk
+  const uploadRes = await fetch(uploadUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Length':         String(fileData.length),
+      'X-Goog-Upload-Command':  'upload, finalize',
+      'X-Goog-Upload-Offset':   '0',
+    },
+    body: fileData,
+  });
+
+  if (!uploadRes.ok) {
+    const text = await uploadRes.text();
+    throw new Error(`업로드 실패 (${uploadRes.status}): ${text}`);
+  }
+
+  const op = await uploadRes.json();
   if (op.name && !op.done) {
     await pollOperation(apiKey, op.name);
   }
