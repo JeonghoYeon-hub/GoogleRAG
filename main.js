@@ -33,6 +33,11 @@ async function startServer() {
   process.env.APP_DATA_DIR = dataDir;
   process.env.STATIC_DIR   = staticDir;
 
+  // Default client_secret.json bundled with the app (used when the user has
+  // not placed an override next to the exe). __dirname points inside the
+  // asar archive when packaged; Electron's fs patches handle the read.
+  process.env.BUNDLED_CLIENT_SECRET = path.join(__dirname, 'client_secret.json');
+
   // Load .env from user data directory before server modules initialize
   require('dotenv').config({ path: path.join(dataDir, '.env') });
 

@@ -29,14 +29,21 @@ const GDOCS_EXPORT = {
 function loadClientSecret() {
   const baseDir = process.env.APP_DATA_DIR || process.cwd();
   const envFile = process.env.GOOGLE_CLIENT_SECRET_FILE || '';
+  const userOverride = path.join(baseDir, 'client_secret.json');
+  const bundled = process.env.BUNDLED_CLIENT_SECRET || '';
+
+  // Priority: env override > user file next to exe > app-bundled default
   const filePath =
     envFile && fs.existsSync(envFile) ? envFile
-    : fs.existsSync(path.join(baseDir, 'client_secret.json'))
-      ? path.join(baseDir, 'client_secret.json')
-      : null;
+    : fs.existsSync(userOverride)     ? userOverride
+    : (bundled && fs.existsSync(bundled)) ? bundled
+    : null;
   if (!filePath) return null;
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    // OAuth client JSON wraps creds in either "web" (Web app) or "installed" (Desktop app)
+    const creds = raw.web || raw.installed;
+    return creds || null;
   } catch {
     return null;
   }
@@ -81,8 +88,8 @@ async function getValidTokens(clientId) {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({
           refresh_token: tokens.refresh_token,
-          client_id:     secret.web.client_id,
-          client_secret: secret.web.client_secret,
+          client_id:     secret.client_id,
+          client_secret: secret.client_secret,
           grant_type:    'refresh_token',
         }),
       });
@@ -108,8 +115,8 @@ function buildDriveService(tokens) {
   if (!secret) throw new Error('client_secret.json이 없습니다');
   const redirectUri = process.env.OAUTH_REDIRECT_URI || 'http://localhost:3000/auth/callback';
   const auth = new google.auth.OAuth2(
-    secret.web.client_id,
-    secret.web.client_secret,
+    secret.client_id,
+    secret.client_secret,
     redirectUri
   );
   auth.setCredentials(tokens);
@@ -130,7 +137,7 @@ function buildAuthUrl(clientId) {
   oauthStates.set(state, { codeVerifier, clientId });
 
   const params = new URLSearchParams({
-    client_id:             secret.web.client_id,
+    client_id:             secret.client_id,
     redirect_uri:          redirectUri,
     response_type:         'code',
     scope:                 DRIVE_SCOPES.join(' '),
@@ -160,8 +167,8 @@ async function handleCallback(code, state) {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       code,
-      client_id:     secret.web.client_id,
-      client_secret: secret.web.client_secret,
+      client_id:     secret.client_id,
+      client_secret: secret.client_secret,
       redirect_uri:  redirectUri,
       grant_type:    'authorization_code',
       code_verifier: codeVerifier,

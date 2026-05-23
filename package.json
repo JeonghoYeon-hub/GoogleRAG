@@ -42,7 +42,7 @@
       "!_svg_debug/**",
       "!sessions.db*",
       "!.env*",
-      "!client_secret.json",
+      "client_secret.json",
       "!*.bat",
       "!*.md",
       "!.claude/**",
